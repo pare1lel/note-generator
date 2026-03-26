@@ -10,6 +10,17 @@
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Context full. Project state saved to .claude/MEMORY.md. Restart to continue.\"}'",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
