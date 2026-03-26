@@ -1,0 +1,111 @@
+@import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0f0f0f;
+  --surface: #1a1a1a;
+  --surface-light: #262626;
+  --border: #333333;
+  --primary: #e5e5e5;
+  --secondary: #a3a3a3;
+  --accent-gold: #d4a574;
+  --accent-teal: #5eead4;
+  --accent-rose: #f472b6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--primary);
+  font-family: 'Inter', system-ui, sans-serif;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+/* TipTap Editor Styles */
+.tiptap {
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 18px;
+  line-height: 1.8;
+  color: var(--primary);
+  outline: none;
+}
+
+.tiptap p {
+  margin-bottom: 1.5em;
+}
+
+.tiptap p:last-child {
+  margin-bottom: 0;
+}
+
+.tiptap::selection {
+  background-color: rgba(250, 204, 21, 0.3);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--secondary);
+}
+
+/* Word highlight on double-click */
+.word-highlight {
+  background-color: rgba(212, 165, 116, 0.25);
+  border-radius: 2px;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+/* Selection highlight for sentence */
+.sentence-highlight {
+  background-color: rgba(94, 234, 212, 0.2);
+  border-radius: 2px;
+}
+
+/* Animation for annotation cards */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.annotation-card {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Loading spinner */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
