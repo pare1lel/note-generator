@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { BookOpen, Wand2, Trash2, ChevronDown, Loader2 } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
+import { BookOpen, Wand2, Trash2, ChevronDown, Loader2, Sun, Moon } from "lucide-react";
 import ReadingEditor from "@/components/ReadingEditor";
 import AnnotationCard from "@/components/AnnotationCards";
 import { Annotation } from "@/lib/types";
@@ -13,11 +13,20 @@ import {
 } from "@/lib/llm-simulator";
 
 export default function Home() {
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [selectedArticleId, setSelectedArticleId] = useState(sampleArticles[0].id);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedWords, setSelectedWords] = useState<Set<string>>(new Set());
   const [selectedSentences, setSelectedSentences] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  }, []);
 
   const selectedArticle = sampleArticles.find((a) => a.id === selectedArticleId) || sampleArticles[0];
 
@@ -102,24 +111,38 @@ export default function Home() {
           </div>
 
           {/* Article Selector */}
-          <div className="relative">
-            <select
-              value={selectedArticleId}
-              onChange={(e) => {
-                setSelectedArticleId(e.target.value);
-                setAnnotations([]);
-                setSelectedWords(new Set());
-                setSelectedSentences(new Set());
-              }}
-              className="appearance-none rounded-lg border border-border bg-surface-light px-4 py-2 pr-10 text-sm text-primary focus:border-accent-gold focus:outline-none focus:ring-1 focus:ring-accent-gold"
+          <div className="flex items-center gap-4">
+            <button
+              onClick={toggleTheme}
+              className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface-light transition-colors hover:bg-surface"
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
             >
-              {sampleArticles.map((article) => (
-                <option key={article.id} value={article.id}>
-                  {article.title}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
+              {theme === "dark" ? (
+                <Sun className="h-5 w-5 text-secondary hover:text-accent-gold" />
+              ) : (
+                <Moon className="h-5 w-5 text-secondary hover:text-accent-rose" />
+              )}
+            </button>
+
+            <div className="relative">
+              <select
+                value={selectedArticleId}
+                onChange={(e) => {
+                  setSelectedArticleId(e.target.value);
+                  setAnnotations([]);
+                  setSelectedWords(new Set());
+                  setSelectedSentences(new Set());
+                }}
+                className="appearance-none rounded-lg border border-border bg-surface-light px-4 py-2 pr-10 text-sm text-primary focus:border-accent-gold focus:outline-none focus:ring-1 focus:ring-accent-gold"
+              >
+                {sampleArticles.map((article) => (
+                  <option key={article.id} value={article.id}>
+                    {article.title}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
+            </div>
           </div>
         </div>
       </header>
@@ -137,10 +160,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-2 text-xs text-secondary">
               <span className="rounded-full bg-surface-light px-2 py-1">
-                Double-click word for definition
-              </span>
-              <span className="rounded-full bg-surface-light px-2 py-1">
-                Drag to select sentence
+                Select text to annotate
               </span>
             </div>
           </div>

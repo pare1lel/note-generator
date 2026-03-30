@@ -6,18 +6,19 @@ const config: Config = {
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
+  darkMode: ["class", "[data-theme=\"dark\"]"],
   theme: {
     extend: {
       colors: {
-        background: "#0f0f0f",
-        surface: "#1a1a1a",
-        "surface-light": "#262626",
-        border: "#333333",
-        primary: "#e5e5e5",
-        secondary: "#a3a3a3",
-        "accent-gold": "#d4a574",
-        "accent-teal": "#5eead4",
-        "accent-rose": "#f472b6",
+        background: "var(--background)",
+        surface: "var(--surface)",
+        "surface-light": "var(--surface-light)",
+        border: "var(--border)",
+        primary: "var(--primary)",
+        secondary: "var(--secondary)",
+        "accent-gold": "var(--accent-gold)",
+        "accent-teal": "var(--accent-teal)",
+        "accent-rose": "var(--accent-rose)",
       },
       fontFamily: {
         serif: ["Crimson Pro", "Georgia", "serif"],
