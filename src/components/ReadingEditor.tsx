@@ -2,7 +2,7 @@
 
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import AnnotationMark from "@/extensions/annotation-mark";
 import AnnotationPopup from "./AnnotationPopup";
@@ -46,14 +46,18 @@ interface FloatingButton {
   to: number;
 }
 
-export default function ReadingEditor({
+export interface ReadingEditorRef {
+  getContent: () => string;
+}
+
+const ReadingEditor = forwardRef<ReadingEditorRef, ReadingEditorProps>(function ReadingEditor({
   content,
   annotations,
   savedMarks,
   onWordSelect,
   onSentenceSelect,
   onDismissAnnotation,
-}: ReadingEditorProps) {
+}, ref) {
   const editorRef = useRef<HTMLDivElement>(null);
   const [floatingButton, setFloatingButton] = useState<FloatingButton | null>(null);
   const pendingAnnotationsRef = useRef<PendingAnnotation[]>([]);
@@ -68,6 +72,10 @@ export default function ReadingEditor({
     editable: true,
     immediatelyRender: false,
   });
+
+  useImperativeHandle(ref, () => ({
+    getContent: () => editor?.getHTML() ?? "",
+  }), [editor]);
 
   // Update editor content when article changes
   useEffect(() => {
@@ -412,4 +420,6 @@ export default function ReadingEditor({
       )}
     </div>
   );
-}
+});
+
+export default ReadingEditor;

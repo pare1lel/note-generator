@@ -63,6 +63,23 @@ export function getAllArticles(): Article[] {
   return getDb().prepare("SELECT id, title, author, content FROM articles").all() as Article[];
 }
 
+export function createArticle(title: string, content: string, author?: string): Article {
+  const id = `article-${Date.now()}`;
+  getDb()
+    .prepare("INSERT INTO articles (id, title, author, content) VALUES (?, ?, ?, ?)")
+    .run(id, title, author ?? null, content);
+  return { id, title, author, content };
+}
+
+export function updateArticle(id: string, title: string, content: string, author?: string): void {
+  const db = getDb();
+  db.prepare("UPDATE articles SET title = ?, author = ?, content = ? WHERE id = ?")
+    .run(title, author ?? null, content, id);
+  // Content may have changed — invalidate cached style report and annotations
+  db.prepare("DELETE FROM style_reports WHERE article_id = ?").run(id);
+  db.prepare("DELETE FROM annotations WHERE article_id = ?").run(id);
+}
+
 // --- Annotations ---
 
 export interface StoredAnnotation {
