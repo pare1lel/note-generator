@@ -79,18 +79,51 @@ body {
   background: var(--secondary);
 }
 
-/* Word highlight on double-click */
-.word-highlight {
-  background-color: rgba(212, 165, 116, 0.25);
+/* Annotation marks in editor */
+.annotation-mark {
+  position: relative;
   border-radius: 2px;
   padding: 0 2px;
   cursor: pointer;
+  transition: background-color 0.15s ease;
 }
 
-/* Selection highlight for sentence */
-.sentence-highlight {
-  background-color: rgba(94, 234, 212, 0.2);
-  border-radius: 2px;
+.annotation-mark--word {
+  background-color: rgba(212, 165, 116, 0.25);
+}
+
+.annotation-mark--sentence {
+  background-color: rgba(94, 234, 212, 0.15);
+}
+
+/* Annotation badge (superscript number) */
+.annotation-badge {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1;
+  vertical-align: super;
+  margin-left: 1px;
+  padding: 1px 4px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.1s ease, filter 0.1s ease;
+}
+
+.annotation-badge:hover {
+  transform: scale(1.2);
+  filter: brightness(1.2);
+}
+
+.annotation-badge--word {
+  background-color: var(--accent-gold);
+  color: #000;
+}
+
+.annotation-badge--sentence {
+  background-color: var(--accent-teal);
+  color: #000;
 }
 
 /* Animation for annotation cards */
@@ -107,6 +140,22 @@ body {
 
 .annotation-card {
   animation: slideIn 0.3s ease-out;
+}
+
+/* Annotation popup */
+@keyframes popupFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.annotation-popup {
+  animation: popupFadeIn 0.2s ease-out;
 }
 
 /* Loading spinner */

@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import { BookOpen, Wand2, Trash2, ChevronDown, Loader2, Sun, Moon } from "lucide-react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { BookOpen, ChevronDown, Loader2, Sun, Moon, FileText } from "lucide-react";
 import ReadingEditor from "@/components/ReadingEditor";
-import AnnotationCard from "@/components/AnnotationCards";
-import { Annotation } from "@/lib/types";
+import { StyleReportCard } from "@/components/AnnotationCards";
+import { WordAnnotation, SentenceAnnotation, StyleReport } from "@/lib/types";
 import { sampleArticles } from "@/lib/articles";
 import {
   generateWordAnnotation,
@@ -12,13 +12,15 @@ import {
   generateStyleReport,
 } from "@/lib/llm-simulator";
 
+type InlineAnnotation = WordAnnotation | SentenceAnnotation;
+
 export default function Home() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [selectedArticleId, setSelectedArticleId] = useState(sampleArticles[0].id);
-  const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [selectedWords, setSelectedWords] = useState<Set<string>>(new Set());
-  const [selectedSentences, setSelectedSentences] = useState<Set<string>>(new Set());
+  const [annotations, setAnnotations] = useState<InlineAnnotation[]>([]);
+  const [styleReport, setStyleReport] = useState<StyleReport | null>(null);
+  const [isGeneratingStyle, setIsGeneratingStyle] = useState(false);
+  const styleReportAbortRef = useRef(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -28,71 +30,85 @@ export default function Home() {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }, []);
 
-  const selectedArticle = sampleArticles.find((a) => a.id === selectedArticleId) || sampleArticles[0];
+  const selectedArticle =
+    sampleArticles.find((a) => a.id === selectedArticleId) || sampleArticles[0];
 
-  // Handle word double-click
-  const handleWordSelect = useCallback(async (word: string, paragraph: string) => {
-    // Avoid duplicate annotations for the same word in quick succession
-    const existingKey = `${word}-${paragraph.substring(0, 50)}`;
-    if (selectedWords.has(existingKey)) return;
+  // Auto-generate style report when article changes
+  useEffect(() => {
+    styleReportAbortRef.current = true; // abort any in-flight generation
+    setStyleReport(null);
+    setIsGeneratingStyle(true);
+    styleReportAbortRef.current = false;
 
-    setSelectedWords((prev) => new Set(prev).add(existingKey));
+    const currentAbortFlag = styleReportAbortRef;
 
-    try {
-      const annotation = await generateWordAnnotation(word, paragraph);
-      setAnnotations((prev) => [...prev, annotation]);
-    } catch (error) {
-      console.error("Failed to generate word annotation:", error);
-    }
-  }, [selectedWords]);
+    generateStyleReport(selectedArticle.title, selectedArticle.content)
+      .then((report) => {
+        if (!currentAbortFlag.current) {
+          setStyleReport(report);
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to generate style report:", error);
+      })
+      .finally(() => {
+        if (!currentAbortFlag.current) {
+          setIsGeneratingStyle(false);
+        }
+      });
+  }, [selectedArticle]);
 
-  // Handle sentence drag selection
+  // Handle word annotation
+  const handleWordSelect = useCallback(
+    async (
+      word: string,
+      paragraph: string,
+      pendingInfo: { id: string; from: number; to: number; number: number }
+    ) => {
+      try {
+        const annotation = await generateWordAnnotation(word, paragraph);
+        // Override the ID with the one from the editor
+        annotation.id = pendingInfo.id;
+        setAnnotations((prev) => [...prev, annotation]);
+      } catch (error) {
+        console.error("Failed to generate word annotation:", error);
+      }
+    },
+    []
+  );
+
+  // Handle sentence annotation
   const handleSentenceSelect = useCallback(
-    async (sentence: string, contextBefore: string[], contextAfter: string[]) => {
-      // Avoid duplicate annotations
-      if (selectedSentences.has(sentence)) return;
-      setSelectedSentences((prev) => new Set(prev).add(sentence));
-
+    async (
+      sentence: string,
+      contextBefore: string[],
+      contextAfter: string[],
+      pendingInfo: { id: string; from: number; to: number; number: number }
+    ) => {
       try {
         const annotation = await generateSentenceAnnotation(
           sentence,
           contextBefore,
           contextAfter
         );
+        annotation.id = pendingInfo.id;
         setAnnotations((prev) => [...prev, annotation]);
       } catch (error) {
         console.error("Failed to generate sentence annotation:", error);
       }
     },
-    [selectedSentences]
+    []
   );
 
-  // Handle style report generation
-  const handleGenerateStyleReport = useCallback(async () => {
-    setIsGenerating(true);
-    try {
-      const annotation = await generateStyleReport(
-        selectedArticle.title,
-        selectedArticle.content
-      );
-      setAnnotations((prev) => [...prev, annotation]);
-    } catch (error) {
-      console.error("Failed to generate style report:", error);
-    } finally {
-      setIsGenerating(false);
-    }
-  }, [selectedArticle]);
-
-  // Clear all annotations
-  const handleClearAll = useCallback(() => {
-    setAnnotations([]);
-    setSelectedWords(new Set());
-    setSelectedSentences(new Set());
+  // Dismiss annotation
+  const handleDismissAnnotation = useCallback((id: string) => {
+    setAnnotations((prev) => prev.filter((a) => a.id !== id));
   }, []);
 
-  // Dismiss single annotation
-  const handleDismiss = useCallback((id: string) => {
-    setAnnotations((prev) => prev.filter((a) => a.id !== id));
+  // Clear annotations on article change
+  const handleArticleChange = useCallback((articleId: string) => {
+    setSelectedArticleId(articleId);
+    setAnnotations([]);
   }, []);
 
   return (
@@ -110,7 +126,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Article Selector */}
           <div className="flex items-center gap-4">
             <button
               onClick={toggleTheme}
@@ -127,12 +142,7 @@ export default function Home() {
             <div className="relative">
               <select
                 value={selectedArticleId}
-                onChange={(e) => {
-                  setSelectedArticleId(e.target.value);
-                  setAnnotations([]);
-                  setSelectedWords(new Set());
-                  setSelectedSentences(new Set());
-                }}
+                onChange={(e) => handleArticleChange(e.target.value)}
                 className="appearance-none rounded-lg border border-border bg-surface-light px-4 py-2 pr-10 text-sm text-primary focus:border-accent-gold focus:outline-none focus:ring-1 focus:ring-accent-gold"
               >
                 {sampleArticles.map((article) => (
@@ -150,12 +160,16 @@ export default function Home() {
       {/* Main Content */}
       <main className="flex flex-1 gap-6 p-6">
         {/* Reading Panel */}
-        <div className="flex w-3/5 flex-col">
+        <div className="flex w-[65%] flex-col">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-medium text-primary">{selectedArticle.title}</h2>
+              <h2 className="text-lg font-medium text-primary">
+                {selectedArticle.title}
+              </h2>
               {selectedArticle.author && (
-                <p className="text-sm text-secondary">by {selectedArticle.author}</p>
+                <p className="text-sm text-secondary">
+                  by {selectedArticle.author}
+                </p>
               )}
             </div>
             <div className="flex items-center gap-2 text-xs text-secondary">
@@ -167,71 +181,35 @@ export default function Home() {
 
           <ReadingEditor
             content={selectedArticle.content}
+            annotations={annotations}
             onWordSelect={handleWordSelect}
             onSentenceSelect={handleSentenceSelect}
-            selectedWords={selectedWords}
-            selectedSentences={selectedSentences}
+            onDismissAnnotation={handleDismissAnnotation}
           />
         </div>
 
-        {/* Annotation Panel */}
-        <div className="flex w-2/5 flex-col">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-medium text-primary">Annotations</h2>
-            <span className="rounded-full bg-surface-light px-2 py-1 text-xs text-secondary">
-              {annotations.length} items
-            </span>
+        {/* Style Report Panel */}
+        <div className="flex w-[35%] flex-col">
+          <div className="mb-4 flex items-center gap-2">
+            <FileText className="h-5 w-5 text-accent-rose" />
+            <h2 className="text-lg font-medium text-primary">Style Report</h2>
           </div>
 
-          {/* Toolbar */}
-          <div className="mb-4 flex gap-2">
-            <button
-              onClick={handleGenerateStyleReport}
-              disabled={isGenerating}
-              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-accent-rose/10 px-4 py-2 text-sm font-medium text-accent-rose transition-colors hover:bg-accent-rose/20 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isGenerating ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Wand2 className="h-4 w-4" />
-                  Generate Style Report
-                </>
-              )}
-            </button>
-            <button
-              onClick={handleClearAll}
-              disabled={annotations.length === 0}
-              className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm text-secondary transition-colors hover:bg-surface-light hover:text-primary disabled:cursor-not-allowed disabled:opacity-30"
-            >
-              <Trash2 className="h-4 w-4" />
-              Clear All
-            </button>
-          </div>
-
-          {/* Annotation List */}
-          <div className="flex-1 space-y-4 overflow-auto">
-            {annotations.length === 0 ? (
+          <div className="flex-1 overflow-auto">
+            {isGeneratingStyle ? (
               <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
-                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-surface-light">
-                  <BookOpen className="h-8 w-8 text-secondary" />
-                </div>
-                <p className="text-sm text-secondary">Select text to generate annotations</p>
-                <p className="mt-1 text-xs text-secondary">
-                  Double-click a word or drag to select a sentence
+                <Loader2 className="mb-4 h-8 w-8 animate-spin text-accent-rose" />
+                <p className="text-sm text-secondary">Generating style analysis...</p>
+              </div>
+            ) : styleReport ? (
+              <StyleReportCard annotation={styleReport} />
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
+                <FileText className="mb-4 h-8 w-8 text-secondary" />
+                <p className="text-sm text-secondary">
+                  Style report could not be generated
                 </p>
               </div>
-            ) : (
-              annotations.map((annotation) => (
-                <AnnotationCard
-                  key={annotation.id}
-                  annotation={annotation}
-                  onDismiss={handleDismiss}
-                />
-              ))
             )}
           </div>
         </div>

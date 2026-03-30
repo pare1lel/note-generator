@@ -1,6 +1,6 @@
 "use client";
 
-import { X, BookOpen, MessageSquare, FileText } from "lucide-react";
+import { X, Trash2, BookOpen, MessageSquare, FileText } from "lucide-react";
 import { Annotation, WordAnnotation, SentenceAnnotation, StyleReport } from "@/lib/types";
 
 interface AnnotationCardProps {
@@ -8,26 +8,44 @@ interface AnnotationCardProps {
   onDismiss: (id: string) => void;
 }
 
-function WordAnnotationCard({
+export function WordAnnotationCard({
   annotation,
-  onDismiss,
+  onClose,
+  onDelete,
+  className,
 }: {
   annotation: WordAnnotation;
-  onDismiss: (id: string) => void;
+  onClose?: () => void;
+  onDelete?: (id: string) => void;
+  className?: string;
 }) {
   return (
-    <div className="annotation-card rounded-lg border-l-4 border-accent-gold bg-surface p-4 shadow-lg">
+    <div className={`annotation-card rounded-lg border-l-4 border-accent-gold bg-surface p-4 shadow-lg ${className || ""}`}>
       <div className="mb-3 flex items-start justify-between">
         <div className="flex items-center gap-2">
           <BookOpen className="h-4 w-4 text-accent-gold" />
           <span className="text-sm font-medium text-accent-gold">Word Analysis</span>
         </div>
-        <button
-          onClick={() => onDismiss(annotation.id)}
-          className="rounded p-1 text-secondary hover:bg-surface-light hover:text-primary"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {onDelete && (
+            <button
+              onClick={() => onDelete(annotation.id)}
+              className="rounded p-1 text-secondary hover:bg-red-500/10 hover:text-red-400 transition-colors"
+              title="Delete annotation"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="rounded p-1 text-secondary hover:bg-surface-light hover:text-primary transition-colors"
+              title="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mb-4 rounded-md bg-surface-light/50 p-3">
@@ -61,26 +79,44 @@ function WordAnnotationCard({
   );
 }
 
-function SentenceAnnotationCard({
+export function SentenceAnnotationCard({
   annotation,
-  onDismiss,
+  onClose,
+  onDelete,
+  className,
 }: {
   annotation: SentenceAnnotation;
-  onDismiss: (id: string) => void;
+  onClose?: () => void;
+  onDelete?: (id: string) => void;
+  className?: string;
 }) {
   return (
-    <div className="annotation-card rounded-lg border-l-4 border-accent-teal bg-surface p-4 shadow-lg">
+    <div className={`annotation-card rounded-lg border-l-4 border-accent-teal bg-surface p-4 shadow-lg ${className || ""}`}>
       <div className="mb-3 flex items-start justify-between">
         <div className="flex items-center gap-2">
           <MessageSquare className="h-4 w-4 text-accent-teal" />
           <span className="text-sm font-medium text-accent-teal">Sentence Explanation</span>
         </div>
-        <button
-          onClick={() => onDismiss(annotation.id)}
-          className="rounded p-1 text-secondary hover:bg-surface-light hover:text-primary"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {onDelete && (
+            <button
+              onClick={() => onDelete(annotation.id)}
+              className="rounded p-1 text-secondary hover:bg-red-500/10 hover:text-red-400 transition-colors"
+              title="Delete annotation"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="rounded p-1 text-secondary hover:bg-surface-light hover:text-primary transition-colors"
+              title="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mb-4 rounded-md bg-surface-light/50 p-3">
@@ -127,12 +163,10 @@ function SentenceAnnotationCard({
   );
 }
 
-function StyleReportCard({
+export function StyleReportCard({
   annotation,
-  onDismiss,
 }: {
   annotation: StyleReport;
-  onDismiss: (id: string) => void;
 }) {
   const { analysis, wordCount } = annotation;
 
@@ -151,19 +185,13 @@ function StyleReportCard({
           <FileText className="h-4 w-4 text-accent-rose" />
           <span className="text-sm font-medium text-accent-rose">Writing Style Analysis</span>
         </div>
-        <button
-          onClick={() => onDismiss(annotation.id)}
-          className="rounded p-1 text-secondary hover:bg-surface-light hover:text-primary"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="mb-4 flex items-center justify-between rounded-md bg-surface-light/50 p-3">
-        <span className="text-sm font-medium text-primary">&ldquo;{annotation.title}&rdquo;</span>
         <span className="rounded-full bg-accent-rose/20 px-2 py-0.5 text-xs text-accent-rose">
           ~{wordCount} words
         </span>
+      </div>
+
+      <div className="mb-4 rounded-md bg-surface-light/50 p-3">
+        <span className="text-sm font-medium text-primary">&ldquo;{annotation.title}&rdquo;</span>
       </div>
 
       <div className="space-y-4">
@@ -177,10 +205,6 @@ function StyleReportCard({
           </div>
         ))}
       </div>
-
-      <div className="mt-4 border-t border-border pt-3 text-xs text-secondary">
-        {new Date(annotation.timestamp).toLocaleTimeString()}
-      </div>
     </div>
   );
 }
@@ -188,11 +212,11 @@ function StyleReportCard({
 export default function AnnotationCard({ annotation, onDismiss }: AnnotationCardProps) {
   switch (annotation.type) {
     case "word":
-      return <WordAnnotationCard annotation={annotation} onDismiss={onDismiss} />;
+      return <WordAnnotationCard annotation={annotation} onDelete={onDismiss} />;
     case "sentence":
-      return <SentenceAnnotationCard annotation={annotation} onDismiss={onDismiss} />;
+      return <SentenceAnnotationCard annotation={annotation} onDelete={onDismiss} />;
     case "style":
-      return <StyleReportCard annotation={annotation} onDismiss={onDismiss} />;
+      return <StyleReportCard annotation={annotation} />;
     default:
       return null;
   }
