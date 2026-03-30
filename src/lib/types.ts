@@ -44,6 +44,14 @@ export interface StyleReport {
 
 export type Annotation = WordAnnotation | SentenceAnnotation | StyleReport;
 
+export interface MarkPosition {
+  id: string;
+  from: number;
+  to: number;
+  number: number;
+  type: "word" | "sentence";
+}
+
 export interface Article {
   id: string;
   title: string;

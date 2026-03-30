@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import AnnotationMark from "@/extensions/annotation-mark";
 import AnnotationPopup from "./AnnotationPopup";
-import { WordAnnotation, SentenceAnnotation } from "@/lib/types";
+import { WordAnnotation, SentenceAnnotation, MarkPosition } from "@/lib/types";
 
 type InlineAnnotation = WordAnnotation | SentenceAnnotation;
 
@@ -21,6 +21,7 @@ interface PendingAnnotation {
 interface ReadingEditorProps {
   content: string;
   annotations: InlineAnnotation[];
+  savedMarks?: MarkPosition[];
   onWordSelect: (
     word: string,
     paragraph: string,
@@ -48,13 +49,13 @@ interface FloatingButton {
 export default function ReadingEditor({
   content,
   annotations,
+  savedMarks,
   onWordSelect,
   onSentenceSelect,
   onDismissAnnotation,
 }: ReadingEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const [floatingButton, setFloatingButton] = useState<FloatingButton | null>(null);
-  const annotationCounterRef = useRef(0);
   const pendingAnnotationsRef = useRef<PendingAnnotation[]>([]);
   const appliedAnnotationIdsRef = useRef<Set<string>>(new Set());
   const [activePopup, setActivePopup] = useState<{
@@ -72,13 +73,31 @@ export default function ReadingEditor({
   useEffect(() => {
     if (editor && content) {
       editor.commands.setContent(content);
-      annotationCounterRef.current = 0;
       pendingAnnotationsRef.current = [];
       appliedAnnotationIdsRef.current.clear();
       setActivePopup(null);
       setFloatingButton(null);
     }
   }, [editor, content]);
+
+  // Seed pending annotations from saved mark positions (loaded from DB)
+  useEffect(() => {
+    if (!savedMarks?.length) return;
+    for (const mark of savedMarks) {
+      if (
+        !appliedAnnotationIdsRef.current.has(mark.id) &&
+        !pendingAnnotationsRef.current.some((p) => p.id === mark.id)
+      ) {
+        pendingAnnotationsRef.current.push({
+          id: mark.id,
+          from: mark.from,
+          to: mark.to,
+          number: mark.number,
+          type: mark.type,
+        });
+      }
+    }
+  }, [savedMarks]);
 
   // Apply marks when new annotations arrive
   useEffect(() => {
@@ -169,11 +188,32 @@ export default function ReadingEditor({
     [editor, getParagraphText]
   );
 
+  const getNextAnnotationNumber = useCallback(() => {
+    const usedNumbers = new Set<number>();
+    for (const p of pendingAnnotationsRef.current) {
+      usedNumbers.add(p.number);
+    }
+    if (editor) {
+      const markType = editor.schema.marks.annotationMark;
+      editor.state.doc.descendants((node) => {
+        if (!node.isText) return;
+        for (const mark of node.marks) {
+          if (mark.type === markType) {
+            const num = parseInt(mark.attrs.number, 10);
+            if (!isNaN(num)) usedNumbers.add(num);
+          }
+        }
+      });
+    }
+    let n = 1;
+    while (usedNumbers.has(n)) n++;
+    return n;
+  }, [editor]);
+
   const handleButtonClick = useCallback(() => {
     if (!floatingButton || !editor) return;
 
-    annotationCounterRef.current += 1;
-    const number = annotationCounterRef.current;
+    const number = getNextAnnotationNumber();
     const id =
       floatingButton.selectionType === "word"
         ? `word-${Date.now()}`
@@ -234,28 +274,15 @@ export default function ReadingEditor({
 
     setFloatingButton(null);
     window.getSelection()?.removeAllRanges();
-  }, [floatingButton, editor, onWordSelect, onSentenceSelect]);
+  }, [floatingButton, editor, onWordSelect, onSentenceSelect, getNextAnnotationNumber]);
 
-  // Handle clicks on annotation badges or highlighted text
+  // Handle clicks on annotation badges
   const handleEditorClick = useCallback(
     (e: MouseEvent) => {
       const target = e.target as HTMLElement;
 
-      // Badge click
       if (target.classList.contains("annotation-badge")) {
         const annotationId = target.dataset.annotationId;
-        if (annotationId) {
-          setActivePopup({ annotationId });
-          e.preventDefault();
-          e.stopPropagation();
-        }
-        return;
-      }
-
-      // Highlighted text click — closest() returns the innermost mark
-      const markEl = target.closest(".annotation-mark") as HTMLElement | null;
-      if (markEl) {
-        const annotationId = markEl.getAttribute("data-annotation-id");
         if (annotationId) {
           setActivePopup({ annotationId });
           e.preventDefault();
@@ -298,8 +325,7 @@ export default function ReadingEditor({
       const target = e.target as HTMLElement;
       if (
         !target.closest(".floating-button") &&
-        !target.closest(".annotation-badge") &&
-        !target.closest(".annotation-mark")
+        !target.closest(".annotation-badge")
       ) {
         setFloatingButton(null);
       }
@@ -307,14 +333,12 @@ export default function ReadingEditor({
     []
   );
 
-  // Capture-phase mousedown to prevent ProseMirror from placing cursor on annotation marks
+  // Capture-phase mousedown to prevent ProseMirror from placing cursor on badge click
   const handleAnnotationMouseDown = useCallback(
     (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (
-        target.closest(".annotation-mark") ||
-        target.classList.contains("annotation-badge")
-      ) {
+      if (target.classList.contains("annotation-badge")) {
+        e.preventDefault();
         e.stopPropagation();
       }
     },

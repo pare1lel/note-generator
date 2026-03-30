@@ -108,6 +108,7 @@ body {
   border-radius: 6px;
   font-weight: 600;
   cursor: pointer;
+  user-select: none;
   transition: transform 0.1s ease, filter 0.1s ease;
 }
 

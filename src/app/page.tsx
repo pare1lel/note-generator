@@ -4,8 +4,13 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { BookOpen, ChevronDown, Loader2, Sun, Moon, FileText } from "lucide-react";
 import ReadingEditor from "@/components/ReadingEditor";
 import { StyleReportCard } from "@/components/AnnotationCards";
-import { WordAnnotation, SentenceAnnotation, StyleReport } from "@/lib/types";
-import { sampleArticles } from "@/lib/articles";
+import {
+  Article,
+  WordAnnotation,
+  SentenceAnnotation,
+  StyleReport,
+  MarkPosition,
+} from "@/lib/types";
 import {
   generateWordAnnotation,
   generateSentenceAnnotation,
@@ -16,8 +21,10 @@ type InlineAnnotation = WordAnnotation | SentenceAnnotation;
 
 export default function Home() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [selectedArticleId, setSelectedArticleId] = useState(sampleArticles[0].id);
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [annotations, setAnnotations] = useState<InlineAnnotation[]>([]);
+  const [savedMarks, setSavedMarks] = useState<MarkPosition[]>([]);
   const [styleReport, setStyleReport] = useState<StyleReport | null>(null);
   const [isGeneratingStyle, setIsGeneratingStyle] = useState(false);
   const styleReportAbortRef = useRef(false);
@@ -30,33 +37,67 @@ export default function Home() {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }, []);
 
-  const selectedArticle =
-    sampleArticles.find((a) => a.id === selectedArticleId) || sampleArticles[0];
-
-  // Auto-generate style report when article changes
+  // Load articles from DB on mount
   useEffect(() => {
-    styleReportAbortRef.current = true; // abort any in-flight generation
+    fetch("/api/articles")
+      .then((res) => res.json())
+      .then((data: Article[]) => {
+        setArticles(data);
+        if (data.length > 0) {
+          setSelectedArticleId(data[0].id);
+        }
+      });
+  }, []);
+
+  const selectedArticle = articles.find((a) => a.id === selectedArticleId) || null;
+
+  // Load annotations + style report when article changes
+  useEffect(() => {
+    if (!selectedArticleId) return;
+
+    // Load annotations
+    fetch(`/api/articles/${selectedArticleId}/annotations`)
+      .then((res) => res.json())
+      .then((stored: { annotation: InlineAnnotation; mark: MarkPosition }[]) => {
+        setAnnotations(stored.map((s) => s.annotation));
+        setSavedMarks(stored.map((s) => ({ ...s.mark, id: s.annotation.id })));
+      });
+
+    // Load or generate style report
+    styleReportAbortRef.current = true;
     setStyleReport(null);
     setIsGeneratingStyle(true);
     styleReportAbortRef.current = false;
 
     const currentAbortFlag = styleReportAbortRef;
 
-    generateStyleReport(selectedArticle.title, selectedArticle.content)
-      .then((report) => {
-        if (!currentAbortFlag.current) {
-          setStyleReport(report);
-        }
-      })
-      .catch((error) => {
-        console.error("Failed to generate style report:", error);
-      })
-      .finally(() => {
-        if (!currentAbortFlag.current) {
+    fetch(`/api/articles/${selectedArticleId}/style-report`)
+      .then((res) => res.json())
+      .then((cached: StyleReport | null) => {
+        if (currentAbortFlag.current) return;
+        if (cached) {
+          setStyleReport(cached);
           setIsGeneratingStyle(false);
+        } else {
+          // Generate and save
+          const article = articles.find((a) => a.id === selectedArticleId);
+          if (!article) return;
+          generateStyleReport(article.title, article.content)
+            .then((report) => {
+              if (currentAbortFlag.current) return;
+              setStyleReport(report);
+              fetch(`/api/articles/${selectedArticleId}/style-report`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(report),
+              });
+            })
+            .finally(() => {
+              if (!currentAbortFlag.current) setIsGeneratingStyle(false);
+            });
         }
       });
-  }, [selectedArticle]);
+  }, [selectedArticleId, articles]);
 
   // Handle word annotation
   const handleWordSelect = useCallback(
@@ -65,16 +106,26 @@ export default function Home() {
       paragraph: string,
       pendingInfo: { id: string; from: number; to: number; number: number }
     ) => {
+      if (!selectedArticleId) return;
       try {
         const annotation = await generateWordAnnotation(word, paragraph);
-        // Override the ID with the one from the editor
         annotation.id = pendingInfo.id;
         setAnnotations((prev) => [...prev, annotation]);
+
+        // Auto-save to DB
+        fetch(`/api/articles/${selectedArticleId}/annotations`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            annotation,
+            mark: { from: pendingInfo.from, to: pendingInfo.to, number: pendingInfo.number },
+          }),
+        });
       } catch (error) {
         console.error("Failed to generate word annotation:", error);
       }
     },
-    []
+    [selectedArticleId]
   );
 
   // Handle sentence annotation
@@ -85,6 +136,7 @@ export default function Home() {
       contextAfter: string[],
       pendingInfo: { id: string; from: number; to: number; number: number }
     ) => {
+      if (!selectedArticleId) return;
       try {
         const annotation = await generateSentenceAnnotation(
           sentence,
@@ -93,23 +145,53 @@ export default function Home() {
         );
         annotation.id = pendingInfo.id;
         setAnnotations((prev) => [...prev, annotation]);
+
+        // Auto-save to DB
+        fetch(`/api/articles/${selectedArticleId}/annotations`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            annotation,
+            mark: { from: pendingInfo.from, to: pendingInfo.to, number: pendingInfo.number },
+          }),
+        });
       } catch (error) {
         console.error("Failed to generate sentence annotation:", error);
       }
     },
-    []
+    [selectedArticleId]
   );
 
   // Dismiss annotation
-  const handleDismissAnnotation = useCallback((id: string) => {
-    setAnnotations((prev) => prev.filter((a) => a.id !== id));
-  }, []);
+  const handleDismissAnnotation = useCallback(
+    (id: string) => {
+      if (!selectedArticleId) return;
+      setAnnotations((prev) => prev.filter((a) => a.id !== id));
 
-  // Clear annotations on article change
+      // Auto-delete from DB
+      fetch(`/api/articles/${selectedArticleId}/annotations`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ annotationId: id }),
+      });
+    },
+    [selectedArticleId]
+  );
+
+  // Change article
   const handleArticleChange = useCallback((articleId: string) => {
     setSelectedArticleId(articleId);
     setAnnotations([]);
+    setSavedMarks([]);
   }, []);
+
+  if (!selectedArticle) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-accent-gold" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -141,11 +223,11 @@ export default function Home() {
 
             <div className="relative">
               <select
-                value={selectedArticleId}
+                value={selectedArticleId ?? ""}
                 onChange={(e) => handleArticleChange(e.target.value)}
                 className="appearance-none rounded-lg border border-border bg-surface-light px-4 py-2 pr-10 text-sm text-primary focus:border-accent-gold focus:outline-none focus:ring-1 focus:ring-accent-gold"
               >
-                {sampleArticles.map((article) => (
+                {articles.map((article) => (
                   <option key={article.id} value={article.id}>
                     {article.title}
                   </option>
@@ -182,6 +264,7 @@ export default function Home() {
           <ReadingEditor
             content={selectedArticle.content}
             annotations={annotations}
+            savedMarks={savedMarks}
             onWordSelect={handleWordSelect}
             onSentenceSelect={handleSentenceSelect}
             onDismissAnnotation={handleDismissAnnotation}
