@@ -283,33 +283,29 @@ const ReadingEditor = forwardRef<ReadingEditorRef, ReadingEditorProps>(function 
         number,
       });
     } else {
-      const sentences = floatingButton.paragraphText
-        .split(/[.!?]+/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+      const paragraphText = floatingButton.paragraphText;
+      const selectedText = floatingButton.selection;
+      const selIdx = paragraphText.indexOf(selectedText);
 
-      let selectedIndex = -1;
-      for (let i = 0; i < sentences.length; i++) {
-        if (
-          sentences[i].includes(floatingButton.selection) ||
-          floatingButton.selection.includes(sentences[i])
-        ) {
-          selectedIndex = i;
-          break;
-        }
-      }
-      if (selectedIndex === -1) {
-        selectedIndex = Math.floor(sentences.length / 2);
-      }
+      let contextBefore: string[] = [];
+      let contextAfter: string[] = [];
 
-      const contextBefore = sentences.slice(
-        Math.max(0, selectedIndex - 2),
-        selectedIndex
-      );
-      const contextAfter = sentences.slice(
-        selectedIndex + 1,
-        Math.min(sentences.length, selectedIndex + 3)
-      );
+      if (selIdx !== -1) {
+        const textBefore = paragraphText.slice(0, selIdx).trim();
+        const textAfter = paragraphText
+          .slice(selIdx + selectedText.length)
+          .trim();
+
+        // Split by sentence-ending punctuation, preserving the punctuation
+        const splitSentences = (text: string): string[] =>
+          text
+            .split(/(?<=[.!?])\s+/)
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+
+        contextBefore = splitSentences(textBefore).slice(-2);
+        contextAfter = splitSentences(textAfter).slice(0, 2);
+      }
 
       onSentenceSelect(
         floatingButton.selection,
