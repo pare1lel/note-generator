@@ -5,7 +5,7 @@ import { getSessionFromRequest } from "@/lib/auth";
 async function verifyOwnership(req: NextRequest, articleId: string) {
   const session = await getSessionFromRequest(req);
   if (!session) return null;
-  const owner = getArticleOwner(articleId);
+  const owner = await getArticleOwner(articleId);
   if (owner !== session.userId) return null;
   return session;
 }
@@ -17,7 +17,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   const { title, content, author } = await req.json();
-  updateArticle(id, title, content, author);
+  await updateArticle(id, title, content, author);
   return NextResponse.json({ ok: true });
 }
 
@@ -27,6 +27,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  deleteArticle(id);
+  await deleteArticle(id);
   return NextResponse.json({ ok: true });
 }

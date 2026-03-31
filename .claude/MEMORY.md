@@ -12,7 +12,7 @@ LLM-powered English reading notes application for English language learning.
 - TypeScript
 - Tailwind CSS
 - TipTap (rich text editor) + ProseMirror plugins
-- better-sqlite3 (local SQLite persistent storage)
+- @libsql/client (Turso / LibSQL — cloud SQLite)
 - bcryptjs + jose (auth)
 
 ## Key Files
@@ -24,7 +24,7 @@ LLM-powered English reading notes application for English language learning.
 - `src/components/ApiErrorDialog.tsx` — API error dialog with "Try Next API" / "Use Demo Fallback" options
 - `src/components/AuthPage.tsx` — Full-screen login/register page (username+password)
 - `src/extensions/annotation-mark.ts` — Custom TipTap Mark + ProseMirror plugin for badge decorations
-- `src/lib/db.ts` — SQLite database init, schema, seed, CRUD functions (users, articles, annotations, style_reports)
+- `src/lib/db.ts` — Turso/LibSQL database init, schema, seed, async CRUD functions (users, articles, annotations, style_reports)
 - `src/lib/auth.ts` — JWT (jose) sign/verify, session cookie helpers, `getSessionFromRequest()`
 - `src/lib/llm-simulator.ts` — Simulated LLM responses (demo mode, sets `model: "demo"`)
 - `src/lib/stream-json.ts` — Partial JSON parser (`tryParsePartialJson`), `repairJson()`, SSE streaming consumer (`streamGenerate` — calls Anthropic API directly from browser)
@@ -39,6 +39,7 @@ LLM-powered English reading notes application for English language learning.
 - `src/app/api/auth/login/route.ts` — POST login (bcrypt compare, JWT cookie)
 - `src/app/api/auth/logout/route.ts` — POST logout (clear cookie)
 - `src/app/api/auth/me/route.ts` — GET current user from JWT
+- `start.sh` — Local dev startup script (gitignored, sets PATH + env vars + `npm run dev`)
 
 ## Architecture & Interaction Flow
 
@@ -54,13 +55,16 @@ LLM-powered English reading notes application for English language learning.
 - Auth flow in page.tsx: `user` state is `undefined` (loading) → `null` (show AuthPage) → `{username}` (show app)
 - Header shows username + logout button
 
-### Persistent Storage (SQLite)
-- Database file: `data/notes.db` (gitignored)
+### Persistent Storage (Turso / LibSQL)
+- Production: Turso cloud database (`libsql://note-generator-pare1lel.aws-ap-northeast-1.turso.io`)
+- Local dev: can use `file:data/notes.db` (embedded SQLite) or remote Turso
+- Environment variables: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`
+- All db functions are async (using `@libsql/client`)
+- `db()` helper returns initialized client; uses `initPromise` to ensure schema creation runs only once
 - Tables: `users`, `articles` (with user_id), `annotations`, `style_reports`
 - On first run, DB is created with empty tables (no global seed — seeding is per-user on registration)
-- `next.config.js` has `serverExternalPackages: ["better-sqlite3"]`
 - Annotations stored with mark positions (`mark_from`, `mark_to`, `mark_number`) for editor restoration
-- `updateArticle()` clears associated annotations and style_reports (content change invalidates positions)
+- `updateArticle()` uses `batch()` to clear associated annotations and style_reports atomically
 - `deleteArticle()` uses `ON DELETE CASCADE` to remove annotations + style_reports
 
 ### Anthropic API Integration (Direct Browser Call, Streaming)
@@ -70,12 +74,12 @@ LLM-powered English reading notes application for English language learning.
 - **API key never leaves the browser** — `streamGenerate()` calls the Anthropic API directly from the browser (no server proxy)
 - `src/lib/prompts.ts` has `buildPrompt(type, params)` that constructs the LLM prompt client-side
 - `streamGenerate()` fetches `${baseUrl}/v1/messages` with `stream: true`, parses Anthropic SSE `content_block_delta` events directly
-- Headers: `x-api-key`, `anthropic-version: 2023-06-01`, `anthropic-dangerous-direct-browser-access: true`
+- Headers: `x-api-key`, `anthropic-version: 2023-06-01`, `anthropic-dangerous-direct-browser-access: true`, `X-From: note-generator`
 - No server-side `/api/generate` route — removed to prevent API key leakage
 
 ### Streaming Pipeline
 - `src/lib/stream-json.ts` contains:
-  - `repairJson(text)`: Repairs common LLM JSON issues — escapes literal newlines/tabs, uses look-ahead to detect and escape unescaped content quotes vs structural quotes
+  - `repairJson(text)`: Repairs common LLM JSON issues — escapes literal newlines/tabs, uses look-ahead to detect and escape unescaped content quotes vs structural quotes (e.g. Chinese text with ASCII `"` inside JSON string values)
   - `tryParsePartialJson(text)`: Finds first `{`, tracks open strings/brackets, closes them, tries `JSON.parse`
   - `streamGenerate(config, type, params, onUpdate)`: Calls Anthropic API directly from browser, accumulates text from `content_block_delta` SSE events, calls `onUpdate(partialResult)` on each chunk after partial JSON parsing, returns final parsed result
 - Client-side flow:
@@ -178,31 +182,29 @@ LLM-powered English reading notes application for English language learning.
 - Header: app title, theme toggle (dark/light), article selector dropdown, "+" add article button, gear settings button, username display, logout button
 
 ## Current Status
-- **BUG (active)**: Sentence Explanation streaming fails with "Could not parse JSON from streamed response (type=sentence, len=1729)"
-  - The `escapeJsonStringContents()` fix and `tryParsePartialJson` fallback are in place but still not sufficient
-  - Root cause still under investigation — the LLM's sentence explanation JSON likely has a structure that breaks both parsers
-  - Error now includes detailed diagnostics (type, len, console.error with accumulated text preview and per-brace parse errors)
-  - **Next step**: Run with dev server, reproduce the error, check browser console for the detailed `[StreamJSON]` log to see the actual accumulated text and parse error messages, then fix accordingly
-  - Word annotations and Style Report streaming may work fine (shorter/simpler JSON structure)
-- Multi-user auth system implemented (username+password, JWT cookie, per-user data isolation)
-- New users get only "The Last Leaf" by O. Henry, no API keys (demo mode)
-- Persistent storage with SQLite fully implemented
-- Article CRUD (add via modal, inline edit + save, delete with cascade) working
-- Style report caching + regeneration working
-- Anthropic API integration with multi-config, sequential retry, demo fallback working
-- Model name displayed on all annotation/report cards
-- Sentence annotations include Chinese translations in CONTEXT section when API-generated
+- All features implemented and working
+- Multi-user auth system (username+password, JWT cookie, per-user data isolation)
+- Migrated from better-sqlite3 to @libsql/client (Turso) for Vercel deployment
+- API key stays browser-side only (direct Anthropic API call, no server proxy)
+- `repairJson()` handles LLM JSON with unescaped content quotes (look-ahead heuristic)
 - Build passes, dev server runs on http://localhost:3000
+- Ready for Vercel deployment
+
+## Deployment (Vercel)
+- Vercel environment variables needed:
+  - `TURSO_DATABASE_URL` — Turso cloud database URL (`libsql://...`)
+  - `TURSO_AUTH_TOKEN` — Turso auth token
+  - `JWT_SECRET` — strong random string (fallback `"dev-secret-change-in-production"` is insecure)
+- CORS: `platform-api.xaminim.com` must allow the Vercel domain for browser-direct API calls
 
 ## Running Commands
 ```bash
-export PATH="/tmp/node-v20.11.0-darwin-arm64/bin:$PATH"
-npm run dev   # Start dev server
-npm run build # Production build
+./start.sh            # Local dev (sets PATH + env vars + npm run dev)
+npm run build         # Production build
 ```
 
 ## Notes
+- `start.sh` is gitignored — contains env vars (TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, JWT_SECRET)
 - `/tmp/node-v20.11.0-darwin-arm64` may be cleaned by OS; re-download if npm breaks:
   `curl -sL https://nodejs.org/dist/v20.11.0/node-v20.11.0-darwin-arm64.tar.xz | tar -xJ -C /tmp/`
-- API platform `platform-api.xaminim.com` requires `X-From` header
-- Database was recreated for multi-user schema migration (`data/notes.db` deleted)
+- API platform `platform-api.xaminim.com` requires `X-From: note-generator` header

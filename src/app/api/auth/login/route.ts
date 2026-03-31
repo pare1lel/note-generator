@@ -6,7 +6,7 @@ import { signToken, sessionCookieOptions } from "@/lib/auth";
 export async function POST(req: NextRequest) {
   const { username, password } = await req.json();
 
-  const user = getUserByUsername(username?.trim().toLowerCase() ?? "");
+  const user = await getUserByUsername(username?.trim().toLowerCase() ?? "");
   if (!user) {
     return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
   }

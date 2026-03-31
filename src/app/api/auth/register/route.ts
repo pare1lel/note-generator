@@ -14,13 +14,13 @@ export async function POST(req: NextRequest) {
   }
 
   const normalized = username.trim().toLowerCase();
-  const existing = getUserByUsername(normalized);
+  const existing = await getUserByUsername(normalized);
   if (existing) {
     return NextResponse.json({ error: "Username already taken" }, { status: 409 });
   }
 
   const hash = await bcrypt.hash(password, 10);
-  const user = createUser(normalized, hash);
+  const user = await createUser(normalized, hash);
 
   const token = await signToken({ userId: user.id, username: user.username });
   const res = NextResponse.json({ username: user.username });
