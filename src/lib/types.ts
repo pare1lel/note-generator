@@ -11,6 +11,7 @@ export interface WordAnnotation {
     english: string;
     chinese: string;
   };
+  model?: string;
   timestamp: Date;
 }
 
@@ -18,12 +19,16 @@ export interface SentenceAnnotation {
   id: string;
   type: "sentence";
   sentence: string;
+  sentenceZh?: string;
   contextBefore: string[];
   contextAfter: string[];
+  contextBeforeZh?: string[];
+  contextAfterZh?: string[];
   explanation: {
     english: string;
     chinese: string;
   };
+  model?: string;
   timestamp: Date;
 }
 
@@ -39,6 +44,7 @@ export interface StyleReport {
     tone: { english: string; chinese: string };
   };
   wordCount: number;
+  model?: string;
   timestamp: Date;
 }
 
@@ -57,4 +63,11 @@ export interface Article {
   title: string;
   content: string;
   author?: string;
+}
+
+export interface ApiConfig {
+  id: string;
+  baseUrl: string;
+  modelName: string;
+  apiKey: string;
 }

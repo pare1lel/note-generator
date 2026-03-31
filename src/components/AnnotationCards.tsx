@@ -72,8 +72,11 @@ export function WordAnnotationCard({
         </div>
       </div>
 
-      <div className="mt-3 border-t border-border pt-2 text-xs text-secondary">
-        {new Date(annotation.timestamp).toLocaleTimeString()}
+      <div className="mt-3 flex items-center justify-between border-t border-border pt-2 text-xs text-secondary">
+        <span>{new Date(annotation.timestamp).toLocaleTimeString()}</span>
+        {annotation.model && (
+          <span className="rounded-full bg-surface-light px-2 py-0.5">{annotation.model}</span>
+        )}
       </div>
     </div>
   );
@@ -121,6 +124,9 @@ export function SentenceAnnotationCard({
 
       <div className="mb-4 rounded-md bg-surface-light/50 p-3">
         <p className="text-sm italic text-primary">&ldquo;{annotation.sentence}&rdquo;</p>
+        {annotation.sentenceZh && (
+          <p className="mt-1 text-sm text-secondary">{annotation.sentenceZh}</p>
+        )}
       </div>
 
       {(annotation.contextBefore.length > 0 || annotation.contextAfter.length > 0) && (
@@ -130,17 +136,23 @@ export function SentenceAnnotationCard({
           </p>
           <div className="space-y-1">
             {annotation.contextBefore.map((ctx, i) => (
-              <p key={`before-${i}`} className="text-xs text-secondary">
-                ...{ctx}
-              </p>
+              <div key={`before-${i}`}>
+                <p className="text-xs text-secondary">...{ctx}</p>
+                {annotation.contextBeforeZh?.[i] && (
+                  <p className="text-xs text-secondary/70">{annotation.contextBeforeZh[i]}</p>
+                )}
+              </div>
             ))}
             <p className="text-sm font-medium italic text-primary">
               &rarr; {annotation.sentence}
             </p>
             {annotation.contextAfter.map((ctx, i) => (
-              <p key={`after-${i}`} className="text-xs text-secondary">
-                {ctx}...
-              </p>
+              <div key={`after-${i}`}>
+                <p className="text-xs text-secondary">{ctx}...</p>
+                {annotation.contextAfterZh?.[i] && (
+                  <p className="text-xs text-secondary/70">{annotation.contextAfterZh[i]}</p>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -156,8 +168,11 @@ export function SentenceAnnotationCard({
         </div>
       </div>
 
-      <div className="mt-3 border-t border-border pt-2 text-xs text-secondary">
-        {new Date(annotation.timestamp).toLocaleTimeString()}
+      <div className="mt-3 flex items-center justify-between border-t border-border pt-2 text-xs text-secondary">
+        <span>{new Date(annotation.timestamp).toLocaleTimeString()}</span>
+        {annotation.model && (
+          <span className="rounded-full bg-surface-light px-2 py-0.5">{annotation.model}</span>
+        )}
       </div>
     </div>
   );
@@ -205,6 +220,12 @@ export function StyleReportCard({
           </div>
         ))}
       </div>
+
+      {annotation.model && (
+        <div className="mt-3 flex justify-end border-t border-border pt-2 text-xs text-secondary">
+          <span className="rounded-full bg-surface-light px-2 py-0.5">{annotation.model}</span>
+        </div>
+      )}
     </div>
   );
 }

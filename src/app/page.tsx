@@ -1,15 +1,18 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { BookOpen, ChevronDown, Loader2, Sun, Moon, FileText, RefreshCw, Plus, X, Save } from "lucide-react";
+import { BookOpen, ChevronDown, Loader2, Sun, Moon, FileText, RefreshCw, Plus, X, Save, Trash2, Settings as SettingsIcon } from "lucide-react";
 import ReadingEditor, { ReadingEditorRef } from "@/components/ReadingEditor";
 import { StyleReportCard } from "@/components/AnnotationCards";
+import Settings, { loadApiConfigs } from "@/components/Settings";
+import ApiErrorDialog from "@/components/ApiErrorDialog";
 import {
   Article,
   WordAnnotation,
   SentenceAnnotation,
   StyleReport,
   MarkPosition,
+  ApiConfig,
 } from "@/lib/types";
 import {
   generateWordAnnotation,
@@ -18,6 +21,49 @@ import {
 } from "@/lib/llm-simulator";
 
 type InlineAnnotation = WordAnnotation | SentenceAnnotation;
+
+interface ApiRetryState {
+  type: "word" | "sentence" | "style";
+  configIndex: number;
+  error: string;
+  articleId: string;
+  // word params
+  word?: string;
+  paragraph?: string;
+  // sentence params
+  sentence?: string;
+  contextBefore?: string[];
+  contextAfter?: string[];
+  // style params
+  title?: string;
+  content?: string;
+  // common
+  pendingInfo?: { id: string; from: number; to: number; number: number };
+  abortFlag?: React.RefObject<boolean>;
+}
+
+async function callGenerateApi(
+  config: ApiConfig,
+  type: "word" | "sentence" | "style",
+  params: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const res = await fetch("/api/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      baseUrl: config.baseUrl,
+      model: config.modelName,
+      apiKey: config.apiKey,
+      type,
+      params,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+  return data.result;
+}
 
 export default function Home() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -33,10 +79,18 @@ export default function Home() {
   const [modalTitle, setModalTitle] = useState("");
   const [modalAuthor, setModalAuthor] = useState("");
   const [modalContent, setModalContent] = useState("");
+  const [apiConfigs, setApiConfigs] = useState<ApiConfig[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const [apiRetry, setApiRetry] = useState<ApiRetryState | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  // Load API configs from localStorage on mount
+  useEffect(() => {
+    setApiConfigs(loadApiConfigs());
+  }, []);
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
@@ -89,27 +143,60 @@ export default function Home() {
       });
   }, [selectedArticleId, articles]);
 
-  // Generate style report and save to DB
+  // Complete style report: save to state and DB
+  const completeStyleReport = useCallback(
+    (report: StyleReport, articleId: string, abortFlag: React.RefObject<boolean>) => {
+      if (abortFlag.current) return;
+      setStyleReport(report);
+      setIsGeneratingStyle(false);
+      fetch(`/api/articles/${articleId}/style-report`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(report),
+      });
+    },
+    []
+  );
+
+  // Generate style report — try API first, then fallback
   const doGenerateStyleReport = useCallback(
-    (articleId: string, abortFlag: React.RefObject<boolean>) => {
+    async (articleId: string, abortFlag: React.RefObject<boolean>) => {
       const article = articles.find((a) => a.id === articleId);
       if (!article) return;
       setIsGeneratingStyle(true);
-      generateStyleReport(article.title, article.content)
-        .then((report) => {
-          if (abortFlag.current) return;
-          setStyleReport(report);
-          fetch(`/api/articles/${articleId}/style-report`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(report),
+
+      if (apiConfigs.length > 0) {
+        try {
+          const result = await callGenerateApi(apiConfigs[0], "style", { title: article.title, content: article.content });
+          const r = result as { analysis: StyleReport["analysis"]; wordCount: number };
+          const report: StyleReport = {
+            id: `style-${Date.now()}`,
+            type: "style",
+            title: article.title,
+            analysis: r.analysis,
+            wordCount: r.wordCount,
+            model: apiConfigs[0].modelName,
+            timestamp: new Date(),
+          };
+          completeStyleReport(report, articleId, abortFlag);
+        } catch (err) {
+          setApiRetry({
+            type: "style",
+            configIndex: 0,
+            error: err instanceof Error ? err.message : String(err),
+            articleId,
+            title: article.title,
+            content: article.content,
+            abortFlag,
           });
-        })
-        .finally(() => {
-          if (!abortFlag.current) setIsGeneratingStyle(false);
-        });
+        }
+      } else {
+        generateStyleReport(article.title, article.content)
+          .then((report) => completeStyleReport(report, articleId, abortFlag))
+          .catch(() => { if (!abortFlag.current) setIsGeneratingStyle(false); });
+      }
     },
-    [articles]
+    [articles, apiConfigs, completeStyleReport]
   );
 
   // Regenerate style report
@@ -121,6 +208,23 @@ export default function Home() {
     doGenerateStyleReport(selectedArticleId, styleReportAbortRef);
   }, [selectedArticleId, isGeneratingStyle, doGenerateStyleReport]);
 
+  // Try API generation for word annotation, falling back on error
+  const completeWordAnnotation = useCallback(
+    (annotation: WordAnnotation, pendingInfo: { id: string; from: number; to: number; number: number }, articleId: string) => {
+      annotation.id = pendingInfo.id;
+      setAnnotations((prev) => [...prev, annotation]);
+      fetch(`/api/articles/${articleId}/annotations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          annotation,
+          mark: { from: pendingInfo.from, to: pendingInfo.to, number: pendingInfo.number },
+        }),
+      });
+    },
+    []
+  );
+
   // Handle word annotation
   const handleWordSelect = useCallback(
     async (
@@ -129,25 +233,59 @@ export default function Home() {
       pendingInfo: { id: string; from: number; to: number; number: number }
     ) => {
       if (!selectedArticleId) return;
-      try {
-        const annotation = await generateWordAnnotation(word, paragraph);
-        annotation.id = pendingInfo.id;
-        setAnnotations((prev) => [...prev, annotation]);
-
-        // Auto-save to DB
-        fetch(`/api/articles/${selectedArticleId}/annotations`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            annotation,
-            mark: { from: pendingInfo.from, to: pendingInfo.to, number: pendingInfo.number },
-          }),
-        });
-      } catch (error) {
-        console.error("Failed to generate word annotation:", error);
+      if (apiConfigs.length > 0) {
+        try {
+          const result = await callGenerateApi(apiConfigs[0], "word", { word, paragraph });
+          const r = result as { literalMeaning: { english: string; chinese: string }; contextualMeaning: { english: string; chinese: string } };
+          const annotation: WordAnnotation = {
+            id: pendingInfo.id,
+            type: "word",
+            word,
+            paragraph,
+            literalMeaning: r.literalMeaning,
+            contextualMeaning: r.contextualMeaning,
+            model: apiConfigs[0].modelName,
+            timestamp: new Date(),
+          };
+          completeWordAnnotation(annotation, pendingInfo, selectedArticleId);
+        } catch (err) {
+          setApiRetry({
+            type: "word",
+            configIndex: 0,
+            error: err instanceof Error ? err.message : String(err),
+            articleId: selectedArticleId,
+            word,
+            paragraph,
+            pendingInfo,
+          });
+        }
+      } else {
+        try {
+          const annotation = await generateWordAnnotation(word, paragraph);
+          completeWordAnnotation(annotation, pendingInfo, selectedArticleId);
+        } catch (error) {
+          console.error("Failed to generate word annotation:", error);
+        }
       }
     },
-    [selectedArticleId]
+    [selectedArticleId, apiConfigs, completeWordAnnotation]
+  );
+
+  // Try API generation for sentence annotation
+  const completeSentenceAnnotation = useCallback(
+    (annotation: SentenceAnnotation, pendingInfo: { id: string; from: number; to: number; number: number }, articleId: string) => {
+      annotation.id = pendingInfo.id;
+      setAnnotations((prev) => [...prev, annotation]);
+      fetch(`/api/articles/${articleId}/annotations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          annotation,
+          mark: { from: pendingInfo.from, to: pendingInfo.to, number: pendingInfo.number },
+        }),
+      });
+    },
+    []
   );
 
   // Handle sentence annotation
@@ -159,29 +297,46 @@ export default function Home() {
       pendingInfo: { id: string; from: number; to: number; number: number }
     ) => {
       if (!selectedArticleId) return;
-      try {
-        const annotation = await generateSentenceAnnotation(
-          sentence,
-          contextBefore,
-          contextAfter
-        );
-        annotation.id = pendingInfo.id;
-        setAnnotations((prev) => [...prev, annotation]);
-
-        // Auto-save to DB
-        fetch(`/api/articles/${selectedArticleId}/annotations`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            annotation,
-            mark: { from: pendingInfo.from, to: pendingInfo.to, number: pendingInfo.number },
-          }),
-        });
-      } catch (error) {
-        console.error("Failed to generate sentence annotation:", error);
+      if (apiConfigs.length > 0) {
+        try {
+          const result = await callGenerateApi(apiConfigs[0], "sentence", { sentence, contextBefore, contextAfter });
+          const r = result as { sentenceZh?: string; explanation: { english: string; chinese: string }; contextBeforeZh?: string[]; contextAfterZh?: string[] };
+          const annotation: SentenceAnnotation = {
+            id: pendingInfo.id,
+            type: "sentence",
+            sentence,
+            sentenceZh: r.sentenceZh,
+            contextBefore,
+            contextAfter,
+            contextBeforeZh: r.contextBeforeZh,
+            contextAfterZh: r.contextAfterZh,
+            explanation: r.explanation,
+            model: apiConfigs[0].modelName,
+            timestamp: new Date(),
+          };
+          completeSentenceAnnotation(annotation, pendingInfo, selectedArticleId);
+        } catch (err) {
+          setApiRetry({
+            type: "sentence",
+            configIndex: 0,
+            error: err instanceof Error ? err.message : String(err),
+            articleId: selectedArticleId,
+            sentence,
+            contextBefore,
+            contextAfter,
+            pendingInfo,
+          });
+        }
+      } else {
+        try {
+          const annotation = await generateSentenceAnnotation(sentence, contextBefore, contextAfter);
+          completeSentenceAnnotation(annotation, pendingInfo, selectedArticleId);
+        } catch (error) {
+          console.error("Failed to generate sentence annotation:", error);
+        }
       }
     },
-    [selectedArticleId]
+    [selectedArticleId, apiConfigs, completeSentenceAnnotation]
   );
 
   // Dismiss annotation
@@ -199,6 +354,93 @@ export default function Home() {
     },
     [selectedArticleId]
   );
+
+  // API retry: try next config
+  const handleApiRetryNext = useCallback(async () => {
+    if (!apiRetry) return;
+    const nextIndex = apiRetry.configIndex + 1;
+    if (nextIndex >= apiConfigs.length) {
+      // No more configs, fall through to fallback
+      setApiRetry(null);
+      return;
+    }
+    const config = apiConfigs[nextIndex];
+    try {
+      if (apiRetry.type === "word" && apiRetry.word && apiRetry.pendingInfo) {
+        const result = await callGenerateApi(config, "word", { word: apiRetry.word, paragraph: apiRetry.paragraph });
+        const r = result as { literalMeaning: { english: string; chinese: string }; contextualMeaning: { english: string; chinese: string } };
+        const annotation: WordAnnotation = {
+          id: apiRetry.pendingInfo.id,
+          type: "word",
+          word: apiRetry.word,
+          paragraph: apiRetry.paragraph || "",
+          literalMeaning: r.literalMeaning,
+          contextualMeaning: r.contextualMeaning,
+          model: config.modelName,
+          timestamp: new Date(),
+        };
+        completeWordAnnotation(annotation, apiRetry.pendingInfo, apiRetry.articleId);
+        setApiRetry(null);
+      } else if (apiRetry.type === "sentence" && apiRetry.sentence && apiRetry.pendingInfo) {
+        const result = await callGenerateApi(config, "sentence", { sentence: apiRetry.sentence, contextBefore: apiRetry.contextBefore, contextAfter: apiRetry.contextAfter });
+        const r = result as { sentenceZh?: string; explanation: { english: string; chinese: string }; contextBeforeZh?: string[]; contextAfterZh?: string[] };
+        const annotation: SentenceAnnotation = {
+          id: apiRetry.pendingInfo.id,
+          type: "sentence",
+          sentence: apiRetry.sentence,
+          sentenceZh: r.sentenceZh,
+          contextBefore: apiRetry.contextBefore || [],
+          contextAfter: apiRetry.contextAfter || [],
+          contextBeforeZh: r.contextBeforeZh,
+          contextAfterZh: r.contextAfterZh,
+          explanation: r.explanation,
+          model: config.modelName,
+          timestamp: new Date(),
+        };
+        completeSentenceAnnotation(annotation, apiRetry.pendingInfo, apiRetry.articleId);
+        setApiRetry(null);
+      } else if (apiRetry.type === "style" && apiRetry.title != null) {
+        const result = await callGenerateApi(config, "style", { title: apiRetry.title, content: apiRetry.content });
+        const r = result as { analysis: StyleReport["analysis"]; wordCount: number };
+        const report: StyleReport = {
+          id: `style-${Date.now()}`,
+          type: "style",
+          title: apiRetry.title,
+          analysis: r.analysis,
+          wordCount: r.wordCount,
+          model: config.modelName,
+          timestamp: new Date(),
+        };
+        const abortFlag = apiRetry.abortFlag || { current: false };
+        completeStyleReport(report, apiRetry.articleId, abortFlag);
+        setApiRetry(null);
+      }
+    } catch (err) {
+      setApiRetry({ ...apiRetry, configIndex: nextIndex, error: err instanceof Error ? err.message : String(err) });
+    }
+  }, [apiRetry, apiConfigs, completeWordAnnotation, completeSentenceAnnotation, completeStyleReport]);
+
+  // API fallback: use demo generator
+  const handleApiUseFallback = useCallback(async () => {
+    if (!apiRetry) return;
+    setApiRetry(null);
+    try {
+      if (apiRetry.type === "word" && apiRetry.word && apiRetry.pendingInfo) {
+        const annotation = await generateWordAnnotation(apiRetry.word, apiRetry.paragraph || "");
+        completeWordAnnotation(annotation, apiRetry.pendingInfo, apiRetry.articleId);
+      } else if (apiRetry.type === "sentence" && apiRetry.sentence && apiRetry.pendingInfo) {
+        const annotation = await generateSentenceAnnotation(apiRetry.sentence, apiRetry.contextBefore || [], apiRetry.contextAfter || []);
+        completeSentenceAnnotation(annotation, apiRetry.pendingInfo, apiRetry.articleId);
+      } else if (apiRetry.type === "style" && apiRetry.title != null) {
+        const report = await generateStyleReport(apiRetry.title, apiRetry.content || "");
+        const abortFlag = apiRetry.abortFlag || { current: false };
+        completeStyleReport(report, apiRetry.articleId, abortFlag);
+      }
+    } catch (error) {
+      console.error("Fallback generation failed:", error);
+      if (apiRetry.type === "style") setIsGeneratingStyle(false);
+    }
+  }, [apiRetry, completeWordAnnotation, completeSentenceAnnotation, completeStyleReport]);
 
   // Change article
   const handleArticleChange = useCallback((articleId: string) => {
@@ -240,6 +482,18 @@ export default function Home() {
     handleArticleChange(created.id);
     setShowAddModal(false);
   }, [modalTitle, modalAuthor, modalContent, reloadArticles, handleArticleChange]);
+
+  // Delete current article
+  const handleDeleteArticle = useCallback(async () => {
+    if (!selectedArticle) return;
+    if (!confirm(`Delete "${selectedArticle.title}"? This will also delete all its annotations.`)) return;
+    await fetch(`/api/articles/${selectedArticle.id}`, { method: "DELETE" });
+    const data = await reloadArticles();
+    const next = data.find((a) => a.id !== selectedArticle.id);
+    setAnnotations([]);
+    setSavedMarks([]);
+    setSelectedArticleId(next?.id ?? null);
+  }, [selectedArticle, reloadArticles]);
 
   // Save current editor content to DB
   const handleSaveArticle = useCallback(async () => {
@@ -321,6 +575,14 @@ export default function Home() {
             >
               <Plus className="h-5 w-5 text-secondary hover:text-accent-gold" />
             </button>
+
+            <button
+              onClick={() => setShowSettings(true)}
+              className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface-light transition-colors hover:bg-surface"
+              title="Settings"
+            >
+              <SettingsIcon className="h-5 w-5 text-secondary hover:text-accent-gold" />
+            </button>
           </div>
         </div>
       </header>
@@ -350,6 +612,14 @@ export default function Home() {
               >
                 <Save className="h-3.5 w-3.5" />
                 Save
+              </button>
+              <button
+                onClick={handleDeleteArticle}
+                className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-surface-light px-3 py-1.5 text-xs text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
+                title="Delete this article"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
               </button>
               <span className="rounded-full bg-surface-light px-2 py-1 text-xs text-secondary">
                 Select text to annotate
@@ -472,6 +742,24 @@ export default function Home() {
             </div>
           </div>
         </div>
+      )}
+      {/* Settings Modal */}
+      <Settings
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+        configs={apiConfigs}
+        onConfigsChange={setApiConfigs}
+      />
+
+      {/* API Error Dialog */}
+      {apiRetry && (
+        <ApiErrorDialog
+          error={apiRetry.error}
+          modelName={apiConfigs[apiRetry.configIndex]?.modelName || "unknown"}
+          hasNext={apiRetry.configIndex + 1 < apiConfigs.length}
+          onTryNext={handleApiRetryNext}
+          onUseFallback={handleApiUseFallback}
+        />
       )}
     </div>
   );

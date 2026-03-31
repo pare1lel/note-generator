@@ -309,6 +309,7 @@ export async function generateWordAnnotation(
     paragraph: paragraph,
     literalMeaning: data.literal,
     contextualMeaning: data.contextual,
+    model: "demo",
     timestamp: new Date(),
   };
 }
@@ -328,6 +329,7 @@ export async function generateSentenceAnnotation(
     contextBefore,
     contextAfter,
     explanation: getSentenceExplanation(sentence),
+    model: "demo",
     timestamp: new Date(),
   };
 }
@@ -347,6 +349,7 @@ export async function generateStyleReport(
     title,
     analysis,
     wordCount,
+    model: "demo",
     timestamp: new Date(),
   };
 }

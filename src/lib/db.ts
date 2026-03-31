@@ -71,6 +71,10 @@ export function createArticle(title: string, content: string, author?: string): 
   return { id, title, author, content };
 }
 
+export function deleteArticle(id: string): void {
+  getDb().prepare("DELETE FROM articles WHERE id = ?").run(id);
+}
+
 export function updateArticle(id: string, title: string, content: string, author?: string): void {
   const db = getDb();
   db.prepare("UPDATE articles SET title = ?, author = ?, content = ? WHERE id = ?")
