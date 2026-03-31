@@ -1,4 +1,5 @@
 import type { ApiConfig } from "./types";
+import { buildPrompt } from "./prompts";
 
 /**
  * Repair common JSON issues from LLM output:
@@ -119,30 +120,29 @@ export async function streamGenerate(
   params: Record<string, unknown>,
   onUpdate: (partial: Record<string, unknown>) => void
 ): Promise<Record<string, unknown>> {
-  const res = await fetch("/api/generate", {
+  const prompt = buildPrompt(type, params);
+  const apiUrl = `${config.baseUrl.replace(/\/+$/, "")}/v1/messages`;
+
+  const res = await fetch(apiUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": config.apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+      "X-From": "note-generator",
+    },
     body: JSON.stringify({
-      baseUrl: config.baseUrl,
       model: config.modelName,
-      apiKey: config.apiKey,
-      type,
-      params,
+      max_tokens: 4096,
+      stream: true,
+      messages: [{ role: "user", content: prompt }],
     }),
   });
 
   if (!res.ok) {
-    // Non-streaming error response (JSON)
-    const data = await res.json();
-    throw new Error(data.error || `HTTP ${res.status}`);
-  }
-
-  const contentType = res.headers.get("content-type") || "";
-  if (!contentType.includes("text/event-stream")) {
-    // Fallback: non-streaming JSON response (shouldn't happen, but handle gracefully)
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    return data.result;
+    const errorBody = await res.text();
+    throw new Error(`API error (${res.status}): ${errorBody}`);
   }
 
   const reader = res.body!.getReader();
@@ -167,16 +167,15 @@ export async function streamGenerate(
 
         try {
           const evt = JSON.parse(data);
-          if (evt.error) throw new Error(evt.error);
-          if (evt.t) {
-            accumulated += evt.t;
+          if (evt.type === "error") throw new Error(evt.error?.message || "Stream error");
+          if (evt.type === "content_block_delta" && evt.delta?.text) {
+            accumulated += evt.delta.text;
             chunkCount++;
             const partial = tryParsePartialJson(accumulated);
             if (partial) onUpdate(partial);
           }
         } catch (e) {
           if (e instanceof Error && e.message !== "Unexpected end of JSON input") {
-            // Re-throw real errors (not partial parse failures)
             if (data.includes('"error"')) throw e;
           }
         }
@@ -193,9 +192,9 @@ export async function streamGenerate(
         if (data === "[DONE]") continue;
         try {
           const evt = JSON.parse(data);
-          if (evt.error) throw new Error(evt.error);
-          if (evt.t) {
-            accumulated += evt.t;
+          if (evt.type === "error") throw new Error(evt.error?.message || "Stream error");
+          if (evt.type === "content_block_delta" && evt.delta?.text) {
+            accumulated += evt.delta.text;
             chunkCount++;
           }
         } catch {

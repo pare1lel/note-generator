@@ -27,14 +27,14 @@ LLM-powered English reading notes application for English language learning.
 - `src/lib/db.ts` — SQLite database init, schema, seed, CRUD functions (users, articles, annotations, style_reports)
 - `src/lib/auth.ts` — JWT (jose) sign/verify, session cookie helpers, `getSessionFromRequest()`
 - `src/lib/llm-simulator.ts` — Simulated LLM responses (demo mode, sets `model: "demo"`)
-- `src/lib/stream-json.ts` — Partial JSON parser (`tryParsePartialJson`), `escapeJsonStringContents()`, SSE streaming consumer (`streamGenerate`)
+- `src/lib/stream-json.ts` — Partial JSON parser (`tryParsePartialJson`), `repairJson()`, SSE streaming consumer (`streamGenerate` — calls Anthropic API directly from browser)
+- `src/lib/prompts.ts` — Prompt templates for word/sentence/style generation (`buildPrompt()`)
 - `src/lib/articles.ts` — 3 sample English articles (used as seed data)
 - `src/lib/types.ts` — TypeScript type definitions (including MarkPosition, ApiConfig, User)
 - `src/app/api/articles/route.ts` — GET all articles (by user), POST create article
 - `src/app/api/articles/[id]/route.ts` — PUT update article, DELETE article (with ownership check)
 - `src/app/api/articles/[id]/annotations/route.ts` — GET/POST/DELETE annotations (with ownership check)
 - `src/app/api/articles/[id]/style-report/route.ts` — GET/PUT style report (with ownership check)
-- `src/app/api/generate/route.ts` — POST proxy to Anthropic API with SSE streaming (word/sentence/style generation)
 - `src/app/api/auth/register/route.ts` — POST register (bcrypt hash, seeds "The Last Leaf")
 - `src/app/api/auth/login/route.ts` — POST login (bcrypt compare, JWT cookie)
 - `src/app/api/auth/logout/route.ts` — POST logout (clear cookie)
@@ -63,24 +63,21 @@ LLM-powered English reading notes application for English language learning.
 - `updateArticle()` clears associated annotations and style_reports (content change invalidates positions)
 - `deleteArticle()` uses `ON DELETE CASCADE` to remove annotations + style_reports
 
-### Anthropic API Integration (Streaming)
+### Anthropic API Integration (Direct Browser Call, Streaming)
 - Settings modal (gear icon in header) manages multiple API configs stored in localStorage
 - Each config: `baseUrl` (default `https://platform-api.xaminim.com`), `modelName`, `apiKey`
 - `ApiConfig` type defined in `src/lib/types.ts`
-- API proxy route `/api/generate` sends `stream: true` to Anthropic API, proxies SSE events:
-  - Parses Anthropic SSE `content_block_delta` events to extract `delta.text`
-  - Forwards text deltas as `data: {"t":"chunk"}\n\n`
-  - Sends `data: [DONE]\n\n` when complete
-  - Returns `new Response(readableStream, { headers: 'text/event-stream' })`
-  - Flushes remaining buffer after upstream ends (fix for lost final chunks)
-- Headers: `x-api-key`, `anthropic-version: 2023-06-01`, `X-From: note-generator`
-- 300s timeout via AbortController
+- **API key never leaves the browser** — `streamGenerate()` calls the Anthropic API directly from the browser (no server proxy)
+- `src/lib/prompts.ts` has `buildPrompt(type, params)` that constructs the LLM prompt client-side
+- `streamGenerate()` fetches `${baseUrl}/v1/messages` with `stream: true`, parses Anthropic SSE `content_block_delta` events directly
+- Headers: `x-api-key`, `anthropic-version: 2023-06-01`, `anthropic-dangerous-direct-browser-access: true`
+- No server-side `/api/generate` route — removed to prevent API key leakage
 
 ### Streaming Pipeline
 - `src/lib/stream-json.ts` contains:
-  - `escapeJsonStringContents(text)`: Escapes control chars only inside JSON string values (not structural whitespace)
+  - `repairJson(text)`: Repairs common LLM JSON issues — escapes literal newlines/tabs, uses look-ahead to detect and escape unescaped content quotes vs structural quotes
   - `tryParsePartialJson(text)`: Finds first `{`, tracks open strings/brackets, closes them, tries `JSON.parse`
-  - `streamGenerate(config, type, params, onUpdate)`: Fetches `/api/generate` as SSE, accumulates text chunks, calls `onUpdate(partialResult)` on each chunk after partial JSON parsing, returns final parsed result
+  - `streamGenerate(config, type, params, onUpdate)`: Calls Anthropic API directly from browser, accumulates text from `content_block_delta` SSE events, calls `onUpdate(partialResult)` on each chunk after partial JSON parsing, returns final parsed result
 - Client-side flow:
   1. Trigger annotation → create placeholder with empty fields → add to state → open popup immediately
   2. Start `streamGenerate()` → `onUpdate` callback merges partial data into annotation state
