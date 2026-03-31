@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { BookOpen, ChevronDown, Loader2, Sun, Moon, FileText, RefreshCw, Plus, X, Save, Trash2, Settings as SettingsIcon } from "lucide-react";
+import { BookOpen, ChevronDown, Loader2, Sun, Moon, FileText, RefreshCw, Plus, X, Save, Trash2, Settings as SettingsIcon, LogOut } from "lucide-react";
 import ReadingEditor, { ReadingEditorRef } from "@/components/ReadingEditor";
 import { StyleReportCard } from "@/components/AnnotationCards";
 import Settings, { loadApiConfigs } from "@/components/Settings";
 import ApiErrorDialog from "@/components/ApiErrorDialog";
+import AuthPage from "@/components/AuthPage";
 import {
   Article,
   WordAnnotation,
@@ -13,6 +14,7 @@ import {
   StyleReport,
   MarkPosition,
   ApiConfig,
+  User,
 } from "@/lib/types";
 import {
   generateWordAnnotation,
@@ -56,6 +58,7 @@ function makeEmptyStyleAnalysis(): StyleReport["analysis"] {
 }
 
 export default function Home() {
+  const [user, setUser] = useState<User | null | undefined>(undefined);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [articles, setArticles] = useState<Article[]>([]);
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
@@ -85,12 +88,21 @@ export default function Home() {
     setApiConfigs(loadApiConfigs());
   }, []);
 
+  // Check auth on mount
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => res.json())
+      .then((data) => setUser(data ? { username: data.username } : null))
+      .catch(() => setUser(null));
+  }, []);
+
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   }, []);
 
-  // Load articles from DB on mount
+  // Load articles from DB after auth
   useEffect(() => {
+    if (!user) return;
     fetch("/api/articles")
       .then((res) => res.json())
       .then((data: Article[]) => {
@@ -99,7 +111,7 @@ export default function Home() {
           setSelectedArticleId(data[0].id);
         }
       });
-  }, []);
+  }, [user]);
 
   const selectedArticle = articles.find((a) => a.id === selectedArticleId) || null;
 
@@ -687,6 +699,28 @@ export default function Home() {
     }
   }, [selectedArticle, reloadArticles]);
 
+  const handleLogout = useCallback(async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setUser(null);
+    setArticles([]);
+    setSelectedArticleId(null);
+    setAnnotations([]);
+    setSavedMarks([]);
+    setStyleReport(null);
+  }, []);
+
+  if (user === undefined) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-accent-gold" />
+      </div>
+    );
+  }
+
+  if (user === null) {
+    return <AuthPage onSuccess={(username) => setUser({ username })} />;
+  }
+
   if (!selectedArticle) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -753,6 +787,17 @@ export default function Home() {
             >
               <SettingsIcon className="h-5 w-5 text-secondary hover:text-accent-gold" />
             </button>
+
+            <div className="flex items-center gap-2 border-l border-border pl-4">
+              <span className="rounded-lg border border-border bg-surface-light px-3 py-2 text-sm text-primary">{user.username}</span>
+              <button
+                onClick={handleLogout}
+                className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface-light transition-colors hover:bg-surface"
+                title="Logout"
+              >
+                <LogOut className="h-4 w-4 text-secondary hover:text-accent-rose" />
+              </button>
+            </div>
           </div>
         </div>
       </header>

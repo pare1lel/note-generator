@@ -18,8 +18,16 @@ function getDb(): Database.Database {
   db.pragma("foreign_keys = ON");
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS articles (
       id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       author TEXT,
       content TEXT NOT NULL,
@@ -45,30 +53,62 @@ function getDb(): Database.Database {
     );
   `);
 
-  // Seed sample articles if table is empty
-  const count = db.prepare("SELECT COUNT(*) as count FROM articles").get() as { count: number };
-  if (count.count === 0) {
-    const insert = db.prepare("INSERT INTO articles (id, title, author, content) VALUES (?, ?, ?, ?)");
-    for (const article of sampleArticles) {
-      insert.run(article.id, article.title, article.author ?? null, article.content);
-    }
+  return db;
+}
+
+// --- Users ---
+
+export interface DbUser {
+  id: number;
+  username: string;
+  password_hash: string;
+}
+
+export function getUserByUsername(username: string): DbUser | null {
+  return (getDb()
+    .prepare("SELECT id, username, password_hash FROM users WHERE username = ?")
+    .get(username) as DbUser) ?? null;
+}
+
+export function createUser(username: string, passwordHash: string): { id: number; username: string } {
+  const result = getDb()
+    .prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)")
+    .run(username, passwordHash);
+  const userId = result.lastInsertRowid as number;
+
+  // Seed "The Last Leaf" for the new user
+  const lastLeaf = sampleArticles.find((a) => a.id === "last-leaf");
+  if (lastLeaf) {
+    const articleId = `last-leaf-${userId}`;
+    getDb()
+      .prepare("INSERT INTO articles (id, user_id, title, author, content) VALUES (?, ?, ?, ?, ?)")
+      .run(articleId, userId, lastLeaf.title, lastLeaf.author ?? null, lastLeaf.content);
   }
 
-  return db;
+  return { id: userId, username };
 }
 
 // --- Articles ---
 
-export function getAllArticles(): Article[] {
-  return getDb().prepare("SELECT id, title, author, content FROM articles").all() as Article[];
+export function getAllArticles(userId: number): Article[] {
+  return getDb()
+    .prepare("SELECT id, title, author, content FROM articles WHERE user_id = ?")
+    .all(userId) as Article[];
 }
 
-export function createArticle(title: string, content: string, author?: string): Article {
+export function createArticle(userId: number, title: string, content: string, author?: string): Article {
   const id = `article-${Date.now()}`;
   getDb()
-    .prepare("INSERT INTO articles (id, title, author, content) VALUES (?, ?, ?, ?)")
-    .run(id, title, author ?? null, content);
+    .prepare("INSERT INTO articles (id, user_id, title, author, content) VALUES (?, ?, ?, ?, ?)")
+    .run(id, userId, title, author ?? null, content);
   return { id, title, author, content };
+}
+
+export function getArticleOwner(articleId: string): number | null {
+  const row = getDb()
+    .prepare("SELECT user_id FROM articles WHERE id = ?")
+    .get(articleId) as { user_id: number } | undefined;
+  return row?.user_id ?? null;
 }
 
 export function deleteArticle(id: string): void {

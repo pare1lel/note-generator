@@ -13,32 +13,51 @@ LLM-powered English reading notes application for English language learning.
 - Tailwind CSS
 - TipTap (rich text editor) + ProseMirror plugins
 - better-sqlite3 (local SQLite persistent storage)
+- bcryptjs + jose (auth)
 
 ## Key Files
-- `src/app/page.tsx` — Main page, left=editor (65%), right=Style Report (35%)
+- `src/app/page.tsx` — Main page, left=editor (65%), right=Style Report (35%), auth gate
 - `src/components/ReadingEditor.tsx` — TipTap editor with annotation marks, badge decorations, popup; uses `forwardRef` exposing `ReadingEditorRef.getContent()` and `dismissAnnotation(id)`
 - `src/components/AnnotationCards.tsx` — WordAnnotationCard, SentenceAnnotationCard, StyleReportCard (all exported); `StreamText` helper for streaming cursor UI
 - `src/components/AnnotationPopup.tsx` — Full-screen modal with blurred backdrop for annotation display, supports `isStreaming` prop
 - `src/components/Settings.tsx` — Settings modal for Anthropic API configs (localStorage persistence)
 - `src/components/ApiErrorDialog.tsx` — API error dialog with "Try Next API" / "Use Demo Fallback" options
+- `src/components/AuthPage.tsx` — Full-screen login/register page (username+password)
 - `src/extensions/annotation-mark.ts` — Custom TipTap Mark + ProseMirror plugin for badge decorations
-- `src/lib/db.ts` — SQLite database init, schema, seed, CRUD functions (articles, annotations, style_reports)
+- `src/lib/db.ts` — SQLite database init, schema, seed, CRUD functions (users, articles, annotations, style_reports)
+- `src/lib/auth.ts` — JWT (jose) sign/verify, session cookie helpers, `getSessionFromRequest()`
 - `src/lib/llm-simulator.ts` — Simulated LLM responses (demo mode, sets `model: "demo"`)
-- `src/lib/stream-json.ts` — Partial JSON parser (`tryParsePartialJson`) + SSE streaming consumer (`streamGenerate`)
+- `src/lib/stream-json.ts` — Partial JSON parser (`tryParsePartialJson`), `escapeJsonStringContents()`, SSE streaming consumer (`streamGenerate`)
 - `src/lib/articles.ts` — 3 sample English articles (used as seed data)
-- `src/lib/types.ts` — TypeScript type definitions (including MarkPosition, ApiConfig)
-- `src/app/api/articles/route.ts` — GET all articles, POST create article
-- `src/app/api/articles/[id]/route.ts` — PUT update article, DELETE article (cascade)
-- `src/app/api/articles/[id]/annotations/route.ts` — GET/POST/DELETE annotations
-- `src/app/api/articles/[id]/style-report/route.ts` — GET/PUT style report
+- `src/lib/types.ts` — TypeScript type definitions (including MarkPosition, ApiConfig, User)
+- `src/app/api/articles/route.ts` — GET all articles (by user), POST create article
+- `src/app/api/articles/[id]/route.ts` — PUT update article, DELETE article (with ownership check)
+- `src/app/api/articles/[id]/annotations/route.ts` — GET/POST/DELETE annotations (with ownership check)
+- `src/app/api/articles/[id]/style-report/route.ts` — GET/PUT style report (with ownership check)
 - `src/app/api/generate/route.ts` — POST proxy to Anthropic API with SSE streaming (word/sentence/style generation)
+- `src/app/api/auth/register/route.ts` — POST register (bcrypt hash, seeds "The Last Leaf")
+- `src/app/api/auth/login/route.ts` — POST login (bcrypt compare, JWT cookie)
+- `src/app/api/auth/logout/route.ts` — POST logout (clear cookie)
+- `src/app/api/auth/me/route.ts` — GET current user from JWT
 
 ## Architecture & Interaction Flow
 
+### Multi-User Auth System
+- `users` table: id (INTEGER PK AUTOINCREMENT), username (UNIQUE), password_hash, created_at
+- `articles` table has `user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE`
+- Annotations and style_reports cascade via article_id FK (implicitly per-user)
+- Auth: bcryptjs password hashing, jose JWT in httpOnly cookie (`session`), 7-day expiry
+- `getSessionFromRequest(req)` extracts userId/username from cookie JWT
+- All API routes check auth; article routes also verify ownership via `getArticleOwner(articleId)`
+- `createUser()` in db.ts seeds only "The Last Leaf" by O. Henry for new users (article id = `last-leaf-${userId}`)
+- API keys stay in localStorage (per-device, not per-user)
+- Auth flow in page.tsx: `user` state is `undefined` (loading) → `null` (show AuthPage) → `{username}` (show app)
+- Header shows username + logout button
+
 ### Persistent Storage (SQLite)
 - Database file: `data/notes.db` (gitignored)
-- Tables: `articles`, `annotations`, `style_reports`
-- On first run, seeds 3 sample articles from `src/lib/articles.ts`
+- Tables: `users`, `articles` (with user_id), `annotations`, `style_reports`
+- On first run, DB is created with empty tables (no global seed — seeding is per-user on registration)
 - `next.config.js` has `serverExternalPackages: ["better-sqlite3"]`
 - Annotations stored with mark positions (`mark_from`, `mark_to`, `mark_number`) for editor restoration
 - `updateArticle()` clears associated annotations and style_reports (content change invalidates positions)
@@ -53,11 +72,13 @@ LLM-powered English reading notes application for English language learning.
   - Forwards text deltas as `data: {"t":"chunk"}\n\n`
   - Sends `data: [DONE]\n\n` when complete
   - Returns `new Response(readableStream, { headers: 'text/event-stream' })`
+  - Flushes remaining buffer after upstream ends (fix for lost final chunks)
 - Headers: `x-api-key`, `anthropic-version: 2023-06-01`, `X-From: note-generator`
 - 300s timeout via AbortController
 
 ### Streaming Pipeline
 - `src/lib/stream-json.ts` contains:
+  - `escapeJsonStringContents(text)`: Escapes control chars only inside JSON string values (not structural whitespace)
   - `tryParsePartialJson(text)`: Finds first `{`, tracks open strings/brackets, closes them, tries `JSON.parse`
   - `streamGenerate(config, type, params, onUpdate)`: Fetches `/api/generate` as SSE, accumulates text chunks, calls `onUpdate(partialResult)` on each chunk after partial JSON parsing, returns final parsed result
 - Client-side flow:
@@ -67,6 +88,7 @@ LLM-powered English reading notes application for English language learning.
   4. On complete: remove from `streamingIds`, save to DB
   5. On error: remove placeholder, dismiss annotation mark, show error dialog
 - Demo fallback remains non-streaming (llm-simulator returns full objects)
+- Final parse error includes detailed console.error with accumulated text preview, type, length, parse errors per brace position
 
 ### Streaming UI Components
 - `StreamText` in `AnnotationCards.tsx`: blinking cursor `◊` when streaming + field empty, appended cursor when streaming + field has content
@@ -134,7 +156,7 @@ LLM-powered English reading notes application for English language learning.
 - Streaming: placeholder StyleReport with empty analysis fields created immediately, updated via streaming
 
 ### Article Management
-- Articles loaded from DB via GET API on mount
+- Articles loaded from DB via GET API after auth confirmed
 - Article selector dropdown in header
 - "+" button next to selector opens Add Article modal (title, author, content fields)
 - Delete button (red, next to Save) deletes current article with confirmation dialog
@@ -156,10 +178,17 @@ LLM-powered English reading notes application for English language learning.
 ### Layout
 - Left panel (65%): TipTap editor with inline annotation badges + Save/Delete buttons
 - Right panel (35%): Style Report with Regenerate button
-- Header: app title, theme toggle (dark/light), article selector dropdown, "+" add article button, gear settings button
+- Header: app title, theme toggle (dark/light), article selector dropdown, "+" add article button, gear settings button, username display, logout button
 
 ## Current Status
-- Streaming annotation generation implemented (word/sentence/style)
+- **BUG (active)**: Sentence Explanation streaming fails with "Could not parse JSON from streamed response (type=sentence, len=1729)"
+  - The `escapeJsonStringContents()` fix and `tryParsePartialJson` fallback are in place but still not sufficient
+  - Root cause still under investigation — the LLM's sentence explanation JSON likely has a structure that breaks both parsers
+  - Error now includes detailed diagnostics (type, len, console.error with accumulated text preview and per-brace parse errors)
+  - **Next step**: Run with dev server, reproduce the error, check browser console for the detailed `[StreamJSON]` log to see the actual accumulated text and parse error messages, then fix accordingly
+  - Word annotations and Style Report streaming may work fine (shorter/simpler JSON structure)
+- Multi-user auth system implemented (username+password, JWT cookie, per-user data isolation)
+- New users get only "The Last Leaf" by O. Henry, no API keys (demo mode)
 - Persistent storage with SQLite fully implemented
 - Article CRUD (add via modal, inline edit + save, delete with cascade) working
 - Style report caching + regeneration working
@@ -179,3 +208,4 @@ npm run build # Production build
 - `/tmp/node-v20.11.0-darwin-arm64` may be cleaned by OS; re-download if npm breaks:
   `curl -sL https://nodejs.org/dist/v20.11.0/node-v20.11.0-darwin-arm64.tar.xz | tar -xJ -C /tmp/`
 - API platform `platform-api.xaminim.com` requires `X-From` header
+- Database was recreated for multi-user schema migration (`data/notes.db` deleted)

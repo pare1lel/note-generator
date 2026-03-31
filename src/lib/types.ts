@@ -71,3 +71,7 @@ export interface ApiConfig {
   modelName: string;
   apiKey: string;
 }
+
+export interface User {
+  username: string;
+}

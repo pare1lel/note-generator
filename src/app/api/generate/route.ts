@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getSessionFromRequest } from "@/lib/auth";
 
 const TIMEOUT_MS = 300_000; // 300 seconds
 
@@ -60,6 +61,9 @@ Provide a JSON response with this exact structure (no markdown, no code fences, 
 }`;
 
 export async function POST(req: NextRequest) {
+  const session = await getSessionFromRequest(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   try {
     const { baseUrl, model, apiKey, type, params } = await req.json();
 
