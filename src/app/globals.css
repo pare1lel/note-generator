@@ -169,3 +169,16 @@ body {
 .spinner {
   animation: spin 1s linear infinite;
 }
+
+/* Streaming cursor */
+@keyframes cursor-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.streaming-cursor::after {
+  content: "\25CA";
+  margin-left: 1px;
+  color: var(--accent-teal);
+  animation: cursor-blink 0.8s step-end infinite;
+}

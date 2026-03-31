@@ -6,12 +6,14 @@ import { WordAnnotationCard, SentenceAnnotationCard } from "./AnnotationCards";
 
 interface AnnotationPopupProps {
   annotation: WordAnnotation | SentenceAnnotation;
+  isStreaming?: boolean;
   onClose: () => void;
   onDismiss: (id: string) => void;
 }
 
 export default function AnnotationPopup({
   annotation,
+  isStreaming,
   onClose,
   onDismiss,
 }: AnnotationPopupProps) {
@@ -36,6 +38,7 @@ export default function AnnotationPopup({
       {annotation.type === "word" ? (
         <WordAnnotationCard
           annotation={annotation}
+          isStreaming={isStreaming}
           onClose={onClose}
           onDelete={onDismiss}
           className={modalCardClass}
@@ -43,6 +46,7 @@ export default function AnnotationPopup({
       ) : (
         <SentenceAnnotationCard
           annotation={annotation}
+          isStreaming={isStreaming}
           onClose={onClose}
           onDelete={onDismiss}
           className={modalCardClass}

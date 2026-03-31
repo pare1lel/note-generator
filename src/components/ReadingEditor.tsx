@@ -22,6 +22,8 @@ interface ReadingEditorProps {
   content: string;
   annotations: InlineAnnotation[];
   savedMarks?: MarkPosition[];
+  autoOpenAnnotationId?: string | null;
+  streamingIds?: Set<string>;
   onWordSelect: (
     word: string,
     paragraph: string,
@@ -48,12 +50,15 @@ interface FloatingButton {
 
 export interface ReadingEditorRef {
   getContent: () => string;
+  dismissAnnotation: (id: string) => void;
 }
 
 const ReadingEditor = forwardRef<ReadingEditorRef, ReadingEditorProps>(function ReadingEditor({
   content,
   annotations,
   savedMarks,
+  autoOpenAnnotationId,
+  streamingIds,
   onWordSelect,
   onSentenceSelect,
   onDismissAnnotation,
@@ -73,9 +78,39 @@ const ReadingEditor = forwardRef<ReadingEditorRef, ReadingEditorProps>(function 
     immediatelyRender: false,
   });
 
+  const removeMark = useCallback((id: string) => {
+    if (!editor) return;
+    const { doc, tr } = editor.state;
+    const markType = editor.schema.marks.annotationMark;
+    doc.descendants((node, pos) => {
+      if (node.isText) {
+        const mark = node.marks.find(
+          (m) => m.type === markType && m.attrs.id === id
+        );
+        if (mark) {
+          tr.removeMark(pos, pos + node.nodeSize, mark);
+        }
+      }
+    });
+    editor.view.dispatch(tr);
+    appliedAnnotationIdsRef.current.delete(id);
+  }, [editor]);
+
   useImperativeHandle(ref, () => ({
     getContent: () => editor?.getHTML() ?? "",
-  }), [editor]);
+    dismissAnnotation: (id: string) => {
+      removeMark(id);
+      setActivePopup(null);
+      onDismissAnnotation(id);
+    },
+  }), [editor, removeMark, onDismissAnnotation]);
+
+  // Auto-open popup when parent sets autoOpenAnnotationId
+  useEffect(() => {
+    if (autoOpenAnnotationId) {
+      setActivePopup({ annotationId: autoOpenAnnotationId });
+    }
+  }, [autoOpenAnnotationId]);
 
   // Update editor content when article changes
   useEffect(() => {
@@ -143,7 +178,11 @@ const ReadingEditor = forwardRef<ReadingEditorRef, ReadingEditorProps>(function 
     }
     const paragraph =
       (element as Element).closest("p") || (element as Element).closest("div");
-    return paragraph?.textContent || "";
+    if (!paragraph) return "";
+    // Clone and remove annotation badges to exclude badge numbers from text
+    const clone = paragraph.cloneNode(true) as Element;
+    clone.querySelectorAll(".annotation-badge").forEach((el) => el.remove());
+    return clone.textContent || "";
   }, []);
 
   const handleMouseUp = useCallback(
@@ -303,29 +342,11 @@ const ReadingEditor = forwardRef<ReadingEditorRef, ReadingEditorProps>(function 
 
   const handleDismiss = useCallback(
     (id: string) => {
-      if (!editor) return;
-
-      // Remove the mark from the editor
-      const { doc, tr } = editor.state;
-      const markType = editor.schema.marks.annotationMark;
-
-      doc.descendants((node, pos) => {
-        if (node.isText) {
-          const mark = node.marks.find(
-            (m) => m.type === markType && m.attrs.id === id
-          );
-          if (mark) {
-            tr.removeMark(pos, pos + node.nodeSize, mark);
-          }
-        }
-      });
-
-      editor.view.dispatch(tr);
-      appliedAnnotationIdsRef.current.delete(id);
+      removeMark(id);
       setActivePopup(null);
       onDismissAnnotation(id);
     },
-    [editor, onDismissAnnotation]
+    [removeMark, onDismissAnnotation]
   );
 
   const handleClickOutside = useCallback(
@@ -414,6 +435,7 @@ const ReadingEditor = forwardRef<ReadingEditorRef, ReadingEditorProps>(function 
       {activePopup && activeAnnotation && (
         <AnnotationPopup
           annotation={activeAnnotation}
+          isStreaming={streamingIds?.has(activeAnnotation.id) ?? false}
           onClose={() => setActivePopup(null)}
           onDismiss={handleDismiss}
         />

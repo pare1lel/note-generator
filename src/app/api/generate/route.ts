@@ -77,9 +77,11 @@ export async function POST(req: NextRequest) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
+    const apiUrl = `${baseUrl.replace(/\/+$/, "")}/v1/messages`;
+    let response: Response;
+
     try {
-      const apiUrl = `${baseUrl.replace(/\/+$/, "")}/v1/messages`;
-      const response = await fetch(apiUrl, {
+      response = await fetch(apiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -90,49 +92,11 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           model,
           max_tokens: 4096,
+          stream: true,
           messages: [{ role: "user", content: prompt }],
         }),
         signal: controller.signal,
       });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        return NextResponse.json(
-          { error: `API error (${response.status}): ${errorBody}` },
-          { status: 502 }
-        );
-      }
-
-      const data = await response.json();
-      const text = data.content?.[0]?.text;
-
-      if (!text) {
-        return NextResponse.json({ error: "Empty response from API" }, { status: 502 });
-      }
-
-      // Extract JSON from response (handle possible markdown fences)
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        return NextResponse.json({ error: "Could not parse JSON from API response" }, { status: 502 });
-      }
-
-      let result;
-      try {
-        result = JSON.parse(jsonMatch[0]);
-      } catch {
-        // LLM may produce unescaped control chars inside JSON string values
-        // Replace raw control characters (except already-escaped sequences)
-        const sanitized = jsonMatch[0].replace(/[\x00-\x1f\x7f]/g, (ch: string) => {
-          if (ch === "\n") return "\\n";
-          if (ch === "\r") return "\\r";
-          if (ch === "\t") return "\\t";
-          return "";
-        });
-        result = JSON.parse(sanitized);
-      }
-      return NextResponse.json({ result });
     } catch (err: unknown) {
       clearTimeout(timeout);
       if (err instanceof Error && err.name === "AbortError") {
@@ -140,6 +104,85 @@ export async function POST(req: NextRequest) {
       }
       throw err;
     }
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      return NextResponse.json(
+        { error: `API error (${response.status}): ${errorBody}` },
+        { status: 502 }
+      );
+    }
+
+    if (!response.body) {
+      return NextResponse.json({ error: "Empty response body" }, { status: 502 });
+    }
+
+    // Stream SSE: parse Anthropic SSE events and forward text deltas to client
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const upstream = response.body.getReader();
+
+    const stream = new ReadableStream({
+      async start(ctrl) {
+        let buf = "";
+        try {
+          while (true) {
+            const { done, value } = await upstream.read();
+            if (done) break;
+
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop() || "";
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const payload = line.slice(6).trim();
+              if (payload === "[DONE]") continue;
+
+              try {
+                const evt = JSON.parse(payload);
+                if (evt.type === "content_block_delta" && evt.delta?.text) {
+                  ctrl.enqueue(encoder.encode(`data: ${JSON.stringify({ t: evt.delta.text })}\n\n`));
+                } else if (evt.type === "error") {
+                  ctrl.enqueue(encoder.encode(`data: ${JSON.stringify({ error: evt.error?.message || "Stream error" })}\n\n`));
+                }
+              } catch {
+                // Skip unparseable lines
+              }
+            }
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Stream read error";
+          ctrl.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`));
+        }
+        // Flush remaining buffer after upstream ends
+        if (buf.trim()) {
+          for (const line of buf.split("\n")) {
+            if (!line.startsWith("data: ")) continue;
+            const payload = line.slice(6).trim();
+            if (payload === "[DONE]") continue;
+            try {
+              const evt = JSON.parse(payload);
+              if (evt.type === "content_block_delta" && evt.delta?.text) {
+                ctrl.enqueue(encoder.encode(`data: ${JSON.stringify({ t: evt.delta.text })}\n\n`));
+              }
+            } catch { /* skip */ }
+          }
+        }
+        ctrl.enqueue(encoder.encode("data: [DONE]\n\n"));
+        ctrl.close();
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
