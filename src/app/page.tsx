@@ -330,11 +330,12 @@ export default function Home() {
 
   const streamWordAnnotation = useCallback(
     async (config: ApiConfig, word: string, paragraph: string, pendingInfo: { id: string; from: number; to: number; number: number }, articleId: string) => {
+      const article = articles.find((a) => a.id === articleId);
       try {
         const result = await streamGenerate(
           config,
           "word",
-          { word, paragraph },
+          { word, paragraph, title: article?.title, author: article?.author },
           (partial) => mergeWordPartial(pendingInfo.id, partial)
         );
         const r = result as { literalMeaning: { english: string; chinese: string }; contextualMeaning: { english: string; chinese: string } };
@@ -364,7 +365,7 @@ export default function Home() {
         });
       }
     },
-    [apiConfigs, completeWordAnnotation, mergeWordPartial, removeStreamingId]
+    [articles, apiConfigs, completeWordAnnotation, mergeWordPartial, removeStreamingId]
   );
 
   const handleWordSelect = useCallback(
@@ -424,11 +425,12 @@ export default function Home() {
 
   const streamSentenceAnnotation = useCallback(
     async (config: ApiConfig, sentence: string, contextBefore: string[], contextAfter: string[], pendingInfo: { id: string; from: number; to: number; number: number }, articleId: string) => {
+      const article = articles.find((a) => a.id === articleId);
       try {
         const result = await streamGenerate(
           config,
           "sentence",
-          { sentence, contextBefore, contextAfter },
+          { sentence, contextBefore, contextAfter, title: article?.title, author: article?.author },
           (partial) => mergeSentencePartial(pendingInfo.id, partial)
         );
         const r = result as { sentenceZh?: string; explanation: { english: string; chinese: string }; contextBeforeZh?: string[]; contextAfterZh?: string[] };
@@ -462,7 +464,7 @@ export default function Home() {
         });
       }
     },
-    [apiConfigs, completeSentenceAnnotation, mergeSentencePartial, removeStreamingId]
+    [articles, apiConfigs, completeSentenceAnnotation, mergeSentencePartial, removeStreamingId]
   );
 
   const handleSentenceSelect = useCallback(

@@ -1,4 +1,4 @@
-const WORD_PROMPT = (word: string, paragraph: string) => `You are an English language learning assistant. A student is reading an English article and wants to understand the word "${word}" in this paragraph:
+const WORD_PROMPT = (word: string, paragraph: string, title?: string, author?: string) => `You are an English language learning assistant. A student is reading an English article${title ? ` titled "${title}"` : ""}${author ? ` by ${author}` : ""} and wants to understand the word "${word}" in this paragraph:
 
 "${paragraph}"
 
@@ -14,7 +14,7 @@ Provide a JSON response with this exact structure (no markdown, no code fences, 
   }
 }`;
 
-const SENTENCE_PROMPT = (sentence: string, contextBefore: string[], contextAfter: string[]) => `You are an English language learning assistant. A student is reading an English article and wants to understand this sentence:
+const SENTENCE_PROMPT = (sentence: string, contextBefore: string[], contextAfter: string[], title?: string, author?: string) => `You are an English language learning assistant. A student is reading an English article${title ? ` titled "${title}"` : ""}${author ? ` by ${author}` : ""} and wants to understand this sentence:
 
 "${sentence}"
 
@@ -60,12 +60,14 @@ export function buildPrompt(
   params: Record<string, unknown>
 ): string {
   if (type === "word") {
-    return WORD_PROMPT(params.word as string, params.paragraph as string);
+    return WORD_PROMPT(params.word as string, params.paragraph as string, params.title as string | undefined, params.author as string | undefined);
   } else if (type === "sentence") {
     return SENTENCE_PROMPT(
       params.sentence as string,
       (params.contextBefore as string[]) || [],
-      (params.contextAfter as string[]) || []
+      (params.contextAfter as string[]) || [],
+      params.title as string | undefined,
+      params.author as string | undefined
     );
   } else {
     return STYLE_PROMPT(params.title as string, params.content as string);
