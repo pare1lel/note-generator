@@ -234,6 +234,8 @@ export function StyleReportCard({
     { key: "tone", label: "Tone" },
   ] as const;
 
+  if (!analysis) return null;
+
   return (
     <div className="annotation-card rounded-lg border-l-4 border-accent-rose bg-surface p-4 shadow-lg">
       <div className="mb-3 flex items-start justify-between">
@@ -251,19 +253,23 @@ export function StyleReportCard({
       </div>
 
       <div className="space-y-4">
-        {sections.map(({ key, label }) => (
-          <div key={key}>
-            <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-secondary">
-              {label}
-            </h4>
-            <p className="text-sm text-primary">
-              <StreamText text={analysis[key].english} isStreaming={isStreaming} />
-            </p>
-            <p className="mt-1 text-sm text-secondary">
-              <StreamText text={analysis[key].chinese} isStreaming={isStreaming} />
-            </p>
-          </div>
-        ))}
+        {sections.map(({ key, label }) => {
+          const section = analysis[key];
+          if (!section) return null;
+          return (
+            <div key={key}>
+              <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-secondary">
+                {label}
+              </h4>
+              <p className="text-sm text-primary">
+                <StreamText text={section.english} isStreaming={isStreaming} />
+              </p>
+              <p className="mt-1 text-sm text-secondary">
+                <StreamText text={section.chinese} isStreaming={isStreaming} />
+              </p>
+            </div>
+          );
+        })}
       </div>
 
       <div className="mt-3 flex justify-end border-t border-border pt-2 text-xs text-secondary">

@@ -209,7 +209,7 @@ export default function Home() {
     const currentAbortFlag = styleReportAbortRef;
 
     fetch(`/api/articles/${selectedArticleId}/style-report`)
-      .then((res) => res.json())
+      .then((res) => (res.ok ? res.json() : null))
       .then((cached: StyleReport | null) => {
         if (currentAbortFlag.current) return;
         if (cached) {
@@ -229,6 +229,7 @@ export default function Home() {
       setStyleReport(report);
       setIsGeneratingStyle(false);
       setIsStreamingStyle(false);
+      if (!report.analysis) return;
       fetch(`/api/articles/${articleId}/style-report`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
