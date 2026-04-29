@@ -683,7 +683,13 @@ export default function Home() {
 
   const handleSaveArticle = useCallback(async () => {
     if (!selectedArticle || !editorRef.current) return;
-    const html = editorRef.current.getContent();
+    const raw = editorRef.current.getContent();
+    const tmp = document.createElement("div");
+    tmp.innerHTML = raw;
+    tmp.querySelectorAll("span[data-annotation-id]").forEach((el) => {
+      el.replaceWith(...el.childNodes);
+    });
+    const html = tmp.innerHTML;
     await fetch(`/api/articles/${selectedArticle.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
