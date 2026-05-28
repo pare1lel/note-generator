@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { BookOpen, ChevronDown, Loader2, Sun, Moon, FileText, RefreshCw, Plus, X, Save, Trash2, Settings as SettingsIcon, LogOut } from "lucide-react";
+import { BookOpen, ChevronDown, Loader2, Sun, Moon, FileText, RefreshCw, Plus, X, Save, Trash2, Settings as SettingsIcon, LogOut, MessageCircleQuestion } from "lucide-react";
 import ReadingEditor, { ReadingEditorRef } from "@/components/ReadingEditor";
-import { StyleReportCard } from "@/components/AnnotationCards";
+import { StyleReportCard, QACard } from "@/components/AnnotationCards";
+import QAInputDialog from "@/components/QAInputDialog";
 import Settings, { loadApiConfigs } from "@/components/Settings";
 import ApiErrorDialog from "@/components/ApiErrorDialog";
 import AuthPage from "@/components/AuthPage";
@@ -12,6 +13,7 @@ import {
   WordAnnotation,
   SentenceAnnotation,
   StyleReport,
+  QAItem,
   MarkPosition,
   ApiConfig,
   User,
@@ -26,7 +28,7 @@ import { streamGenerate } from "@/lib/stream-json";
 type InlineAnnotation = WordAnnotation | SentenceAnnotation;
 
 interface ApiRetryState {
-  type: "word" | "sentence" | "style";
+  type: "word" | "sentence" | "style" | "qa";
   configIndex: number;
   error: string;
   articleId: string;
@@ -40,6 +42,11 @@ interface ApiRetryState {
   // style params
   title?: string;
   content?: string;
+  // qa params
+  question?: string;
+  inputLang?: "en" | "zh";
+  qaPlaceholderId?: string;
+  author?: string;
   // common
   pendingInfo?: { id: string; from: number; to: number; number: number };
   abortFlag?: React.RefObject<boolean>;
@@ -68,6 +75,10 @@ export default function Home() {
   const [isGeneratingStyle, setIsGeneratingStyle] = useState(false);
   const [isStreamingStyle, setIsStreamingStyle] = useState(false);
   const styleReportAbortRef = useRef(false);
+  const [qaList, setQaList] = useState<QAItem[]>([]);
+  const [streamingQAIds, setStreamingQAIds] = useState<Set<string>>(new Set());
+  const [showQADialog, setShowQADialog] = useState(false);
+  const qaAbortRef = useRef(false);
   const editorRef = useRef<ReadingEditorRef>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [modalTitle, setModalTitle] = useState("");
@@ -187,6 +198,39 @@ export default function Home() {
     });
   }, []);
 
+  // --- QA streaming helpers ---
+
+  const addStreamingQAId = useCallback((id: string) => {
+    setStreamingQAIds((prev) => new Set(prev).add(id));
+  }, []);
+
+  const removeStreamingQAId = useCallback((id: string) => {
+    setStreamingQAIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const mergeQAPartial = useCallback((qaId: string, partial: Record<string, unknown>) => {
+    setQaList((prev) => prev.map((q) => {
+      if (q.id !== qaId) return q;
+      const qPart = partial.question as { english?: string; chinese?: string } | undefined;
+      const aPart = partial.answer as { english?: string; chinese?: string } | undefined;
+      return {
+        ...q,
+        question: {
+          english: qPart?.english ?? q.question.english,
+          chinese: qPart?.chinese ?? q.question.chinese,
+        },
+        answer: {
+          english: aPart?.english ?? q.answer.english,
+          chinese: aPart?.chinese ?? q.answer.chinese,
+        },
+      };
+    }));
+  }, []);
+
   // --- Load annotations + style report when article changes ---
   useEffect(() => {
     if (!selectedArticleId) return;
@@ -218,6 +262,20 @@ export default function Home() {
         } else {
           doGenerateStyleReport(selectedArticleId, currentAbortFlag);
         }
+      });
+
+    // Load saved QA items
+    qaAbortRef.current = true;
+    setQaList([]);
+    setStreamingQAIds(new Set());
+    qaAbortRef.current = false;
+    const currentQAAbortFlag = qaAbortRef;
+
+    fetch(`/api/articles/${selectedArticleId}/qa`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((items: QAItem[]) => {
+        if (currentQAAbortFlag.current) return;
+        setQaList(items.map((q) => ({ ...q, timestamp: new Date(q.timestamp) })));
       });
   }, [selectedArticleId, articles]);
 
@@ -309,6 +367,98 @@ export default function Home() {
     styleReportAbortRef.current = false;
     doGenerateStyleReport(selectedArticleId, styleReportAbortRef);
   }, [selectedArticleId, isGeneratingStyle, doGenerateStyleReport]);
+
+  // --- QA generation (streaming) ---
+
+  const completeQA = useCallback(
+    (qa: QAItem, articleId: string, abortFlag: React.RefObject<boolean>) => {
+      if (abortFlag.current) return;
+      setQaList((prev) => prev.map((q) => (q.id === qa.id ? qa : q)));
+      removeStreamingQAId(qa.id);
+      fetch(`/api/articles/${articleId}/qa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ qa }),
+      });
+    },
+    [removeStreamingQAId]
+  );
+
+  const doGenerateQA = useCallback(
+    async (articleId: string, question: string, inputLang: "en" | "zh") => {
+      const article = articles.find((a) => a.id === articleId);
+      if (!article) return;
+      const abortFlag = qaAbortRef;
+      const placeholderId = `qa-${Date.now()}`;
+      const placeholder: QAItem = {
+        id: placeholderId,
+        type: "qa",
+        inputLang,
+        question: inputLang === "en"
+          ? { english: question, chinese: "" }
+          : { english: "", chinese: question },
+        answer: { ...EMPTY_BILINGUAL },
+        timestamp: new Date(),
+      };
+      setQaList((prev) => [...prev, placeholder]);
+      addStreamingQAId(placeholderId);
+
+      if (apiConfigs.length > 0) {
+        try {
+          const result = await streamGenerate(
+            apiConfigs[0],
+            "qa",
+            { title: article.title, author: article.author, content: article.content, question, inputLang },
+            (partial) => {
+              if (abortFlag.current) return;
+              mergeQAPartial(placeholderId, partial);
+            }
+          );
+          const r = result as { question: { english: string; chinese: string }; answer: { english: string; chinese: string } };
+          const final: QAItem = {
+            id: placeholderId,
+            type: "qa",
+            inputLang,
+            question: r.question,
+            answer: r.answer,
+            model: apiConfigs[0].modelName,
+            timestamp: new Date(),
+          };
+          completeQA(final, articleId, abortFlag);
+        } catch (err) {
+          removeStreamingQAId(placeholderId);
+          setQaList((prev) => prev.filter((q) => q.id !== placeholderId));
+          setApiRetry({
+            type: "qa",
+            configIndex: 0,
+            error: err instanceof Error ? err.message : String(err),
+            articleId,
+            title: article.title,
+            author: article.author,
+            content: article.content,
+            question,
+            inputLang,
+            qaPlaceholderId: placeholderId,
+            abortFlag,
+          });
+        }
+      } else {
+        // No API configured: drop placeholder and surface notice via apiRetry-style
+        removeStreamingQAId(placeholderId);
+        setQaList((prev) => prev.filter((q) => q.id !== placeholderId));
+      }
+    },
+    [articles, apiConfigs, addStreamingQAId, removeStreamingQAId, completeQA, mergeQAPartial]
+  );
+
+  const handleDeleteQA = useCallback(
+    (qaId: string) => {
+      if (!selectedArticleId) return;
+      setQaList((prev) => prev.filter((q) => q.id !== qaId));
+      fetch(`/api/articles/${selectedArticleId}/qa/${qaId}`, { method: "DELETE" });
+    },
+    [selectedArticleId]
+  );
 
   // --- Word annotation (streaming) ---
 
@@ -601,8 +751,50 @@ export default function Home() {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    } else if (apiRetry.type === "qa" && apiRetry.question != null && apiRetry.inputLang != null && apiRetry.title != null) {
+      const abortFlag = apiRetry.abortFlag || { current: false };
+      const placeholderId = apiRetry.qaPlaceholderId || `qa-${Date.now()}`;
+      const placeholder: QAItem = {
+        id: placeholderId,
+        type: "qa",
+        inputLang: apiRetry.inputLang,
+        question: apiRetry.inputLang === "en"
+          ? { english: apiRetry.question, chinese: "" }
+          : { english: "", chinese: apiRetry.question },
+        answer: { ...EMPTY_BILINGUAL },
+        timestamp: new Date(),
+      };
+      setQaList((prev) => [...prev, placeholder]);
+      addStreamingQAId(placeholderId);
+      try {
+        const result = await streamGenerate(
+          config,
+          "qa",
+          { title: apiRetry.title, author: apiRetry.author, content: apiRetry.content, question: apiRetry.question, inputLang: apiRetry.inputLang },
+          (partial) => { if (!abortFlag.current) mergeQAPartial(placeholderId, partial); }
+        );
+        const r = result as { question: { english: string; chinese: string }; answer: { english: string; chinese: string } };
+        const final: QAItem = {
+          id: placeholderId,
+          type: "qa",
+          inputLang: apiRetry.inputLang,
+          question: r.question,
+          answer: r.answer,
+          model: config.modelName,
+          timestamp: new Date(),
+        };
+        completeQA(final, apiRetry.articleId, abortFlag);
+      } catch (err) {
+        removeStreamingQAId(placeholderId);
+        setQaList((prev) => prev.filter((q) => q.id !== placeholderId));
+        setApiRetry({
+          ...apiRetry,
+          configIndex: nextIndex,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
-  }, [apiRetry, apiConfigs, addStreamingId, streamWordAnnotation, streamSentenceAnnotation, completeStyleReport, mergeStylePartial]);
+  }, [apiRetry, apiConfigs, addStreamingId, addStreamingQAId, removeStreamingQAId, streamWordAnnotation, streamSentenceAnnotation, completeStyleReport, completeQA, mergeStylePartial, mergeQAPartial]);
 
   const handleApiUseFallback = useCallback(async () => {
     if (!apiRetry) return;
@@ -623,6 +815,7 @@ export default function Home() {
         const abortFlag = apiRetry.abortFlag || { current: false };
         completeStyleReport(report, apiRetry.articleId, abortFlag);
       }
+      // QA: no simulator fallback — silently dismiss
     } catch (error) {
       console.error("Fallback generation failed:", error);
       if (apiRetry.type === "style") setIsGeneratingStyle(false);
@@ -637,6 +830,9 @@ export default function Home() {
     setSavedMarks([]);
     setStreamingIds(new Set());
     setAutoOpenAnnotationId(null);
+    qaAbortRef.current = true;
+    setQaList([]);
+    setStreamingQAIds(new Set());
   }, []);
 
   const reloadArticles = useCallback(async () => {
@@ -678,6 +874,7 @@ export default function Home() {
     const next = data.find((a) => a.id !== selectedArticle.id);
     setAnnotations([]);
     setSavedMarks([]);
+    setQaList([]);
     setSelectedArticleId(next?.id ?? null);
   }, [selectedArticle, reloadArticles]);
 
@@ -704,6 +901,7 @@ export default function Home() {
     if (updated) {
       setAnnotations([]);
       setSavedMarks([]);
+      setQaList([]);
       setSelectedArticleId(updated.id);
     }
   }, [selectedArticle, reloadArticles]);
@@ -716,6 +914,7 @@ export default function Home() {
     setAnnotations([]);
     setSavedMarks([]);
     setStyleReport(null);
+    setQaList([]);
   }, []);
 
   if (user === undefined) {
@@ -812,7 +1011,7 @@ export default function Home() {
       </header>
 
       {/* Main Content */}
-      <main className="flex flex-1 gap-6 p-6">
+      <main className="flex items-start gap-6 p-6">
         {/* Reading Panel */}
         <div className="flex w-[65%] flex-col">
           <div className="mb-4 flex items-center justify-between">
@@ -829,6 +1028,14 @@ export default function Home() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowQADialog(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-light px-3 py-1.5 text-xs text-secondary transition-colors hover:bg-surface hover:text-violet-300"
+                title="Ask a question about this article"
+              >
+                <MessageCircleQuestion className="h-3.5 w-3.5" />
+                QA
+              </button>
               <button
                 onClick={handleSaveArticle}
                 className="flex items-center gap-1.5 rounded-lg border border-border bg-surface-light px-3 py-1.5 text-xs text-secondary transition-colors hover:bg-surface hover:text-primary"
@@ -862,6 +1069,19 @@ export default function Home() {
             onSentenceSelect={handleSentenceSelect}
             onDismissAnnotation={handleDismissAnnotation}
           />
+
+          {qaList.length > 0 && (
+            <div className="mt-4 space-y-3">
+              {qaList.map((qa) => (
+                <QACard
+                  key={qa.id}
+                  qa={qa}
+                  isStreaming={streamingQAIds.has(qa.id)}
+                  onDelete={handleDeleteQA}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Style Report Panel */}
@@ -882,16 +1102,16 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="flex-1 overflow-auto">
+          <div className="overflow-auto">
             {styleReport ? (
               <StyleReportCard annotation={styleReport} isStreaming={isStreamingStyle} />
             ) : isGeneratingStyle ? (
-              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
+              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
                 <Loader2 className="mb-4 h-8 w-8 animate-spin text-accent-rose" />
                 <p className="text-sm text-secondary">Generating style analysis...</p>
               </div>
             ) : (
-              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
+              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
                 <FileText className="mb-4 h-8 w-8 text-secondary" />
                 <p className="text-sm text-secondary">
                   Style report could not be generated
@@ -975,6 +1195,19 @@ export default function Home() {
         onClose={() => setShowSettings(false)}
         configs={apiConfigs}
         onConfigsChange={setApiConfigs}
+      />
+
+      {/* QA Input Dialog */}
+      <QAInputDialog
+        open={showQADialog}
+        onClose={() => setShowQADialog(false)}
+        onSubmit={(question, lang) => {
+          if (!selectedArticleId) return;
+          doGenerateQA(selectedArticleId, question, lang);
+          setShowQADialog(false);
+        }}
+        disabled={apiConfigs.length === 0}
+        disabledReason={apiConfigs.length === 0 ? "Add an API config in Settings first." : undefined}
       />
 
       {/* API Error Dialog */}

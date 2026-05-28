@@ -1,7 +1,7 @@
 "use client";
 
-import { X, Trash2, BookOpen, MessageSquare, FileText } from "lucide-react";
-import { Annotation, WordAnnotation, SentenceAnnotation, StyleReport } from "@/lib/types";
+import { X, Trash2, BookOpen, MessageSquare, FileText, MessageCircleQuestion } from "lucide-react";
+import { Annotation, WordAnnotation, SentenceAnnotation, StyleReport, QAItem } from "@/lib/types";
 
 interface AnnotationCardProps {
   annotation: Annotation;
@@ -283,6 +283,72 @@ export function StyleReportCard({
   );
 }
 
+export function QACard({
+  qa,
+  isStreaming,
+  onDelete,
+}: {
+  qa: QAItem;
+  isStreaming?: boolean;
+  onDelete?: (id: string) => void;
+}) {
+  return (
+    <div className="annotation-card rounded-lg border-l-4 border-violet-400 bg-surface p-4 shadow-lg">
+      <div className="mb-3 flex items-start justify-between">
+        <div className="flex items-center gap-2">
+          <MessageCircleQuestion className="h-4 w-4 text-violet-400" />
+          <span className="text-sm font-medium text-violet-400">Q&amp;A</span>
+        </div>
+        {onDelete && (
+          <button
+            onClick={() => onDelete(qa.id)}
+            disabled={isStreaming}
+            className="rounded p-1 text-secondary hover:bg-red-500/10 hover:text-red-400 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+            title="Delete Q&A"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-4">
+        <div>
+          <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-secondary">
+            Question
+          </h4>
+          <p className="text-sm text-primary">
+            <StreamText text={qa.question.english} isStreaming={isStreaming} />
+          </p>
+          <p className="mt-1 text-sm text-secondary">
+            <StreamText text={qa.question.chinese} isStreaming={isStreaming} />
+          </p>
+        </div>
+
+        <div>
+          <h4 className="mb-1 text-xs font-medium uppercase tracking-wide text-secondary">
+            Answer
+          </h4>
+          <p className="text-sm text-primary">
+            <StreamText text={qa.answer.english} isStreaming={isStreaming} />
+          </p>
+          <p className="mt-1 text-sm text-secondary">
+            <StreamText text={qa.answer.chinese} isStreaming={isStreaming} />
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between border-t border-border pt-2 text-xs text-secondary">
+        <span>{new Date(qa.timestamp).toLocaleTimeString()}</span>
+        {isStreaming ? (
+          <span className="rounded-full bg-surface-light px-2 py-0.5 animate-pulse">streaming...</span>
+        ) : qa.model ? (
+          <span className="rounded-full bg-surface-light px-2 py-0.5">{qa.model}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function AnnotationCard({ annotation, onDismiss }: AnnotationCardProps) {
   switch (annotation.type) {
     case "word":
@@ -291,6 +357,8 @@ export default function AnnotationCard({ annotation, onDismiss }: AnnotationCard
       return <SentenceAnnotationCard annotation={annotation} onDelete={onDismiss} />;
     case "style":
       return <StyleReportCard annotation={annotation} />;
+    case "qa":
+      return <QACard qa={annotation} onDelete={onDismiss} />;
     default:
       return null;
   }

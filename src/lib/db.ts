@@ -1,6 +1,6 @@
 import { createClient, type Client } from "@libsql/client";
 import { sampleArticles } from "./articles";
-import type { Article, WordAnnotation, SentenceAnnotation, StyleReport } from "./types";
+import type { Article, WordAnnotation, SentenceAnnotation, StyleReport, QAItem } from "./types";
 
 let client: Client | null = null;
 let initPromise: Promise<void> | null = null;
@@ -54,6 +54,14 @@ async function db(): Promise<Client> {
           data TEXT NOT NULL,
           created_at TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS qa_items (
+          id TEXT PRIMARY KEY,
+          article_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+          data TEXT NOT NULL,
+          created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_qa_items_article ON qa_items(article_id, created_at);
       `);
     })();
   }
@@ -152,6 +160,7 @@ export async function updateArticle(id: string, title: string, content: string, 
     { sql: "UPDATE articles SET title = ?, author = ?, content = ? WHERE id = ?", args: [title, author ?? null, content, id] },
     { sql: "DELETE FROM style_reports WHERE article_id = ?", args: [id] },
     { sql: "DELETE FROM annotations WHERE article_id = ?", args: [id] },
+    { sql: "DELETE FROM qa_items WHERE article_id = ?", args: [id] },
   ], "write");
 }
 
@@ -221,4 +230,31 @@ export async function saveStyleReport(articleId: string, report: StyleReport): P
     sql: "INSERT OR REPLACE INTO style_reports (id, article_id, data) VALUES (?, ?, ?)",
     args: [report.id, articleId, JSON.stringify(report)],
   });
+}
+
+// --- QA Items ---
+
+export async function getQAs(articleId: string): Promise<QAItem[]> {
+  const c = await db();
+  const result = await c.execute({
+    sql: "SELECT data FROM qa_items WHERE article_id = ? ORDER BY created_at ASC",
+    args: [articleId],
+  });
+  return result.rows.map((row) => {
+    const qa = JSON.parse(row.data as string);
+    return { ...qa, timestamp: new Date(qa.timestamp) };
+  });
+}
+
+export async function saveQA(articleId: string, qa: QAItem): Promise<void> {
+  const c = await db();
+  await c.execute({
+    sql: "INSERT OR REPLACE INTO qa_items (id, article_id, data) VALUES (?, ?, ?)",
+    args: [qa.id, articleId, JSON.stringify(qa)],
+  });
+}
+
+export async function deleteQA(qaId: string): Promise<void> {
+  const c = await db();
+  await c.execute({ sql: "DELETE FROM qa_items WHERE id = ?", args: [qaId] });
 }

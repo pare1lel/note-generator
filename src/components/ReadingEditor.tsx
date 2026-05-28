@@ -398,8 +398,8 @@ const ReadingEditor = forwardRef<ReadingEditorRef, ReadingEditorProps>(function 
     : null;
 
   return (
-    <div className="relative h-full" ref={editorRef}>
-      <div className="tiptap-wrapper h-full overflow-auto rounded-lg border border-border bg-surface p-6">
+    <div className="relative" ref={editorRef}>
+      <div className="tiptap-wrapper rounded-lg border border-border bg-surface p-6">
         <EditorContent
           editor={editor}
           className="prose prose-invert max-w-none focus:outline-none"

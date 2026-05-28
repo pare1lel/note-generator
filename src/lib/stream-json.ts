@@ -116,7 +116,7 @@ export function tryParsePartialJson(text: string): Record<string, unknown> | nul
  */
 export async function streamGenerate(
   config: ApiConfig,
-  type: "word" | "sentence" | "style",
+  type: "word" | "sentence" | "style" | "qa",
   params: Record<string, unknown>,
   onUpdate: (partial: Record<string, unknown>) => void
 ): Promise<Record<string, unknown>> {

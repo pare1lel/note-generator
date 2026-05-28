@@ -55,8 +55,28 @@ Provide a JSON response with this exact structure (no markdown, no code fences, 
   "wordCount": ${content.split(/\s+/).length}
 }`;
 
+const QA_PROMPT = (title: string, content: string, question: string, inputLang: "en" | "zh", author?: string) => `You are an English literature tutor helping a bilingual learner.
+The student is reading the article titled "${title}"${author ? ` by ${author}` : ""}.
+
+Full text:
+${content}
+
+The student asked the following question (in ${inputLang === "en" ? "English" : "Chinese"}):
+"${question}"
+
+Tasks:
+1. Render the question in BOTH English and Chinese. Preserve the user's original wording in the ${inputLang === "en" ? "english" : "chinese"} field; produce a faithful translation in the other.
+2. Answer the question in BOTH English and Chinese. The two versions should be parallel in content and depth (not literal word-by-word translation).
+3. Ground every answer in the article. Quote phrases when relevant.
+
+Provide a JSON response with this exact structure (no markdown, no code fences, just raw JSON):
+{
+  "question": { "english": "...", "chinese": "..." },
+  "answer": { "english": "...", "chinese": "..." }
+}`;
+
 export function buildPrompt(
-  type: "word" | "sentence" | "style",
+  type: "word" | "sentence" | "style" | "qa",
   params: Record<string, unknown>
 ): string {
   if (type === "word") {
@@ -68,6 +88,14 @@ export function buildPrompt(
       (params.contextAfter as string[]) || [],
       params.title as string | undefined,
       params.author as string | undefined
+    );
+  } else if (type === "qa") {
+    return QA_PROMPT(
+      params.title as string,
+      params.content as string,
+      params.question as string,
+      params.inputLang as "en" | "zh",
+      params.author as string | undefined,
     );
   } else {
     return STYLE_PROMPT(params.title as string, params.content as string);

@@ -48,7 +48,17 @@ export interface StyleReport {
   timestamp: Date;
 }
 
-export type Annotation = WordAnnotation | SentenceAnnotation | StyleReport;
+export interface QAItem {
+  id: string;
+  type: "qa";
+  inputLang: "en" | "zh";
+  question: { english: string; chinese: string };
+  answer: { english: string; chinese: string };
+  model?: string;
+  timestamp: Date;
+}
+
+export type Annotation = WordAnnotation | SentenceAnnotation | StyleReport | QAItem;
 
 export interface MarkPosition {
   id: string;
