@@ -2,6 +2,8 @@ const WORD_PROMPT = (word: string, paragraph: string, title?: string, author?: s
 
 "${paragraph}"
 
+Be concise. Hit the key points only.
+
 Provide a JSON response with this exact structure (no markdown, no code fences, just raw JSON):
 {
   "literalMeaning": {
@@ -23,6 +25,8 @@ ${contextAfter.length > 0 ? `Context after: "${contextAfter.join(" ")}"` : ""}
 
 Explain what this sentence means in your own words, covering its meaning, purpose in the text, and any rhetorical or stylistic techniques used. Also translate the selected sentence and the context sentences into Chinese.
 
+Be concise. Pick the most important points only. The explanation field should be around 50 words and must not exceed 80 words (Chinese: 50 字左右, 上限 80 字).
+
 Provide a JSON response with this exact structure (no markdown, no code fences, just raw JSON):
 {
   "sentenceZh": "所选句子的中文翻译",
@@ -42,6 +46,8 @@ Content:
 ${content}
 
 Analyze these five aspects of the writing style. For each aspect provide both English and Chinese analysis.
+
+Be concise. For each aspect, focus on the single most distinctive feature and one concrete example. Each field below should be around 50 words and must not exceed 80 words (Chinese: 50 字左右, 上限 80 字).
 
 Provide a JSON response with this exact structure (no markdown, no code fences, just raw JSON):
 {
@@ -68,6 +74,8 @@ Tasks:
 1. Render the question in BOTH English and Chinese. Preserve the user's original wording in the ${inputLang === "en" ? "english" : "chinese"} field; produce a faithful translation in the other.
 2. Answer the question in BOTH English and Chinese. The two versions should be parallel in content and depth (not literal word-by-word translation).
 3. Ground every answer in the article. Quote phrases when relevant.
+
+Be concise. Pick the most important points and answer directly — no preamble, no restating the question. The answer field should be around 50 words and must not exceed 80 words (Chinese: 50 字左右, 上限 80 字). If the question genuinely needs more space, split into short paragraphs of the same length each.
 
 Provide a JSON response with this exact structure (no markdown, no code fences, just raw JSON):
 {
