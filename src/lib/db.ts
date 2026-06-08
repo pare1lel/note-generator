@@ -1,4 +1,6 @@
 import { createClient, type Client } from "@libsql/client";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { sampleArticles } from "./articles";
 import type { Article, WordAnnotation, SentenceAnnotation, StyleReport, QAItem } from "./types";
 
@@ -7,8 +9,16 @@ let initPromise: Promise<void> | null = null;
 
 function getClient(): Client {
   if (!client) {
+    const url = process.env.TURSO_DATABASE_URL ?? "file:data/notes.db";
+    // 本地 SQLite 文件不会自动创建父目录,缺失时 libsql 会报 code 14。
+    if (url.startsWith("file:")) {
+      const dir = dirname(url.slice("file:".length));
+      if (dir && !existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+    }
     client = createClient({
-      url: process.env.TURSO_DATABASE_URL ?? "file:data/notes.db",
+      url,
       authToken: process.env.TURSO_AUTH_TOKEN,
     });
   }

@@ -123,26 +123,43 @@ export async function streamGenerate(
   const prompt = buildPrompt(type, params);
   const apiUrl = `${config.baseUrl.replace(/\/+$/, "")}/v1/messages`;
 
-  const res = await fetch(apiUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": config.apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-      "X-From": "note-generator",
-    },
-    body: JSON.stringify({
-      model: config.modelName,
-      max_tokens: 4096,
-      stream: true,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+  // 429(配额/限流)和 529(过载)是瞬时错误,自动退避重试,
+  // 避免每分钟配额抖动时直接弹出切换 API 的对话框。
+  const MAX_RETRIES = 3;
+  let res: Response;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": config.apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "X-From": "note-generator",
+      },
+      body: JSON.stringify({
+        model: config.modelName,
+        max_tokens: 4096,
+        stream: true,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
 
-  if (!res.ok) {
-    const errorBody = await res.text();
-    throw new Error(`API error (${res.status}): ${errorBody}`);
+    if (res.ok) break;
+
+    const retriable = res.status === 429 || res.status === 529;
+    if (!retriable || attempt >= MAX_RETRIES) {
+      const errorBody = await res.text();
+      throw new Error(`API error (${res.status}): ${errorBody}`);
+    }
+
+    // 优先用 Retry-After 头(秒),否则指数退避:5s, 10s, 20s。
+    const retryAfter = Number(res.headers.get("retry-after"));
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? retryAfter * 1000
+      : 5000 * 2 ** attempt;
+    onUpdate({ __retrying: true, __waitMs: waitMs, __attempt: attempt + 1, __status: res.status });
+    await new Promise((r) => setTimeout(r, waitMs));
   }
 
   const reader = res.body!.getReader();
