@@ -139,7 +139,7 @@ export async function streamGenerate(
       },
       body: JSON.stringify({
         model: config.modelName,
-        max_tokens: 8192,
+        max_tokens: 32768,
         stream: true,
         // 部分代理(如 xaminim 的 claude-code-internal)会给 sonnet 默认强开
         // extended thinking,思考链能吃掉数千 token,导致答案被 max_tokens 截断。
