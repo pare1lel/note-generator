@@ -135,12 +135,16 @@ export async function streamGenerate(
         "x-api-key": config.apiKey,
         "anthropic-version": "2023-06-01",
         "anthropic-dangerous-direct-browser-access": "true",
-        "X-From": "note-generator",
+        "X-Sub-Module": "claude-code-internal",
       },
       body: JSON.stringify({
         model: config.modelName,
-        max_tokens: 4096,
+        max_tokens: 8192,
         stream: true,
+        // 部分代理(如 xaminim 的 claude-code-internal)会给 sonnet 默认强开
+        // extended thinking,思考链能吃掉数千 token,导致答案被 max_tokens 截断。
+        // 这里显式禁用,把预算全部留给正文 JSON。
+        thinking: { type: "disabled" },
         messages: [{ role: "user", content: prompt }],
       }),
     });
@@ -167,6 +171,8 @@ export async function streamGenerate(
   let accumulated = "";
   let buffer = "";
   let chunkCount = 0;
+  let stopReason = "";
+  let thinkingChars = 0;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -185,11 +191,19 @@ export async function streamGenerate(
         try {
           const evt = JSON.parse(data);
           if (evt.type === "error") throw new Error(evt.error?.message || "Stream error");
-          if (evt.type === "content_block_delta" && evt.delta?.text) {
-            accumulated += evt.delta.text;
-            chunkCount++;
-            const partial = tryParsePartialJson(accumulated);
-            if (partial) onUpdate(partial);
+          if (evt.type === "message_delta" && evt.delta?.stop_reason) {
+            stopReason = evt.delta.stop_reason;
+          }
+          if (evt.type === "content_block_delta") {
+            if (evt.delta?.text) {
+              accumulated += evt.delta.text;
+              chunkCount++;
+              const partial = tryParsePartialJson(accumulated);
+              if (partial) onUpdate(partial);
+            } else if (evt.delta?.type === "thinking_delta" && evt.delta?.thinking) {
+              // 代理可能强制开启 extended thinking;思考链不是答案,但会吃 max_tokens 预算
+              thinkingChars += evt.delta.thinking.length;
+            }
           }
         } catch (e) {
           if (e instanceof Error && e.message !== "Unexpected end of JSON input") {
@@ -210,6 +224,9 @@ export async function streamGenerate(
         try {
           const evt = JSON.parse(data);
           if (evt.type === "error") throw new Error(evt.error?.message || "Stream error");
+          if (evt.type === "message_delta" && evt.delta?.stop_reason) {
+            stopReason = evt.delta.stop_reason;
+          }
           if (evt.type === "content_block_delta" && evt.delta?.text) {
             accumulated += evt.delta.text;
             chunkCount++;
@@ -222,7 +239,10 @@ export async function streamGenerate(
   }
 
   if (accumulated.length === 0) {
-    throw new Error(`Stream completed with no content (type=${type}, chunks=${chunkCount}). The API may have returned an empty response.`);
+    const thinkingNote = thinkingChars > 0
+      ? ` 模型只产出了思考链(${thinkingChars} 字符)却没有正文,通常是 max_tokens 被思考耗尽并触发截断(stop_reason=${stopReason || "?"})。`
+      : "";
+    throw new Error(`Stream completed with no content (type=${type}, chunks=${chunkCount}, stop_reason=${stopReason || "?"}).${thinkingNote}`);
   }
 
   // Final parse: try each '{' position
@@ -259,10 +279,15 @@ export async function streamGenerate(
   const details = [
     `[StreamJSON] Failed to parse final response (type=${type})`,
     `Accumulated length: ${accumulated.length}`,
+    `stop_reason: ${stopReason || "?"}${stopReason === "max_tokens" ? " (响应被 max_tokens 截断)" : ""}`,
+    `thinking chars (ignored): ${thinkingChars}`,
     `Brace positions tried: ${braceIndices.length}`,
     parseErrors.length > 0 ? `Parse errors:\n  ${parseErrors.join("\n  ")}` : "No '{' found in response",
     `Accumulated text:\n${preview}`,
   ].join("\n");
   console.error(details);
-  throw new Error(`Could not parse JSON from streamed response (type=${type}, len=${accumulated.length}). Check server logs for details.`);
+  const truncatedHint = stopReason === "max_tokens"
+    ? " 响应被 max_tokens 截断,请提高 max_tokens 或检查代理是否强制开启了 thinking。"
+    : "";
+  throw new Error(`Could not parse JSON from streamed response (type=${type}, len=${accumulated.length}, stop_reason=${stopReason || "?"}).${truncatedHint} Check server logs for details.`);
 }
